@@ -103,3 +103,31 @@ export async function keepAwake() {
   } catch { /* refusé ou non pris en charge */ }
   return null;
 }
+
+// ---------- Lieu saisi à la main ----------------------------------------------
+// Lit des coordonnées dans un texte : « 50.8448, 4.364 », « 50°50'41.3"N 4°21'50.4"E »
+// ou un lien Google Maps complet (…/@50.84,4.36,17z, …!3d50.84!4d4.36, ?q=50.84,4.36).
+// Renvoie {lat, lng} ou null. Les liens courts (maps.app.goo.gl) ne contiennent pas de coordonnées.
+export function parseLocation(text) {
+  const t = String(text || "").trim();
+  if (!t) return null;
+  const ok = (lat, lng) => (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && (lat || lng) ? { lat, lng } : null);
+  const num = String.raw`(-?\d{1,3}(?:\.\d+)?)`;
+  let m;
+  // Lien Google Maps : l'épingle du lieu (!3d…!4d…) est plus précise que le centre de la vue (@…).
+  const url = (() => { try { return decodeURIComponent(t); } catch { return t; } })();
+  if ((m = url.match(new RegExp(String.raw`!3d${num}!4d${num}`)))) return ok(+m[1], +m[2]);
+  if ((m = url.match(new RegExp(String.raw`[?&](?:q|query|ll|destination|center)=(?:loc:)?${num}\s*,\s*${num}`)))) return ok(+m[1], +m[2]);
+  if ((m = url.match(new RegExp(String.raw`@${num},${num}`)))) return ok(+m[1], +m[2]);
+  // Degrés, minutes, secondes.
+  const dms = String.raw`(\d{1,3})°\s*(\d{1,2})['’′]\s*(\d{1,2}(?:[.,]\d+)?)["”″]?\s*([NSEWO])`;
+  if ((m = t.match(new RegExp(`${dms}[\\s,;]+${dms}`, "i")))) {
+    const v = (d, mi, s, h) => (+d + +mi / 60 + +s.replace(",", ".") / 3600) * (/[SWO]/i.test(h) ? -1 : 1);
+    let a = v(m[1], m[2], m[3], m[4]), b = v(m[5], m[6], m[7], m[8]);
+    if (/[EWO]/i.test(m[4])) [a, b] = [b, a];
+    return ok(a, b);
+  }
+  // Deux nombres décimaux : latitude puis longitude.
+  if ((m = t.match(new RegExp(String.raw`^${num}\s*[,; ]\s*${num}$`)))) return ok(+m[1], +m[2]);
+  return null;
+}

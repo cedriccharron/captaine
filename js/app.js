@@ -14,7 +14,7 @@ import {
 } from "./game.js";
 import { THEMES, theme, applyTheme, TEAM_COLORS } from "./themes.js";
 
-const VERSION = "0.3.0 (jalon 3)";
+const VERSION = "0.3.1 (jalon 3)";
 const $ = (s, root = document) => root.querySelector(s);
 const POS_EVERY_MS = 30000;      // envoi de la position du capitaine
 const STALE_MS = 2 * 60000;      // au-delà : « hors réseau »
@@ -44,6 +44,8 @@ const myTeam = (g) => g?.teams.find((t) => t.captain === me());
 const isOwner = (g) => g?.owner === me();
 const W = (themeId) => theme(themeId).words;
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+// Article défini devant un mot féminin des thèmes : « la balise », « l'escale ».
+const la = (s) => (/^[aeiouyéèêh]/i.test(s) ? "l'" : "la ") + s;
 // Dans un aperçu intégré (iframe), le navigateur bloque GPS, boussole et mode hors ligne.
 const inFrame = () => { try { return window.self !== window.top; } catch { return true; } };
 const joinUrl = (code, relay) => `${location.origin}${location.pathname}#/join/${code}${relay ? `?relay=${relay}` : ""}`;
@@ -214,7 +216,7 @@ function viewCourses() {
         </div></article>`;
     }).join("") : `<div class="empty"><p>Aucun parcours pour l'instant.</p></div>`}
     <button class="fab" data-action="new-course" aria-label="Créer un parcours">${icon("plus", 26)}</button>
-    <p class="center small muted pad">Astuce : crée tes étapes sur le terrain, en marchant. Le bouton « Ma position » place l'étape là où tu te trouves.</p>`;
+    <p class="center small muted pad">Astuce : place tes étapes depuis chez toi avec « Sur la carte », ou sur le terrain avec « Ma position ».</p>`;
 }
 
 // ---------- Parcours : éditeur ---------------------------------------------
@@ -307,15 +309,18 @@ function viewStepForm(cid, sid) {
       <div class="place ${placed ? "ok" : ""}">
         <span class="grow">${placed
           ? `<strong>${icon("pin", 16)} Étape placée</strong><br><span class="small muted">${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}${s.accuracy ? ` · précision ± ${Math.round(s.accuracy)} m` : ""}</span>`
-          : `<strong>Pas encore placée</strong><br><span class="small muted">Rends-toi sur place, puis appuie sur « Ma position ».</span>`}</span>
-        <button type="button" class="btn small primary" data-action="draft-locate">${icon("target", 16)} Ma position</button>
+          : `<strong>Pas encore placée</strong><br><span class="small muted">Choisis le lieu sur la carte, ou rends-toi sur place et appuie sur « Ma position ».</span>`}</span>
+        <span class="place-btns">
+          <button type="button" class="btn small primary" data-action="draft-map">${icon("pin", 16)} Sur la carte</button>
+          <button type="button" class="btn small ghost" data-action="draft-locate">${icon("target", 16)} Ma position</button>
+        </span>
       </div>
       <label class="field"><span>Zone d'arrivée</span>
         <select data-f="radius" data-num>${[10, 15, 25, 40, 60, 100].map((r) => `<option value="${r}" ${s.radius === r ? "selected" : ""}>rayon ${r} m</option>`).join("")}</select></label>
     </section>
 
     <section class="panel">
-      <h2>Pour trouver l'${w.step}</h2>
+      <h2>Pour trouver ${la(w.step)}</h2>
       ${seg("nav", NAVS)}
       <p class="small muted">${s.nav === "boussole" ? "Une flèche et la distance guident l'équipe." : s.nav === "radar" ? "Un radar montre le point autour de l'équipe." : "Rien que ton indice : à l'équipe de deviner où aller."}</p>
       <label class="field"><span>Indice de navigation ${s.nav === "indice" ? "" : "(facultatif)"}</span>
@@ -1135,6 +1140,25 @@ const actions = {
 
   "draft-set"(el) {
     S.draft.step[el.dataset.f] = el.dataset.v;
+    render();
+  },
+  async "draft-map"(el) {
+    const [cid] = S.draft.key.split("/");
+    const c = course(cid);
+    const s = S.draft.step;
+    const others = c.steps
+      .map((x, i) => ({ lat: x.lat, lng: x.lng, label: x.final ? "★" : String(i + 1), id: x.id }))
+      .filter((x) => x.id !== s.id && Number.isFinite(x.lat));
+    el.disabled = true;
+    let p;
+    try {
+      const { pickLocation } = await import("./mappick.js");
+      p = await pickLocation({ start: Number.isFinite(s.lat) ? { lat: s.lat, lng: s.lng } : null, others, radius: s.radius,
+        title: "Choisir le lieu" });
+    } finally { el.disabled = false; }
+    if (!p || !S.draft || S.draft.step !== s) return;
+    Object.assign(s, { lat: p.lat, lng: p.lng, accuracy: null });
+    toast(`${cap(W(c.theme).step)} placée sur la carte`);
     render();
   },
   async "draft-locate"(el) {

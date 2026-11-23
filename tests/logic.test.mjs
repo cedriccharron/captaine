@@ -78,3 +78,22 @@ assert.ok(needsJudge({ challenge: "video" }));
 assert.deepEqual(vs3({ title: "x", lat: 1, lng: 1, nav: "boussole", challenge: "jeu", game: { kind: "secousse", target: 30 } }), []);
 assert.equal(vs3({ title: "x", lat: 1, lng: 1, nav: "boussole", challenge: "jeu" }).length, 1);
 console.log("Tests jalon 3 OK");
+
+// Lieu saisi à la main (liens et coordonnées Google Maps)
+{
+  const { parseLocation } = await import("../js/geo.js");
+  const near = (r, lat, lng) => r && Math.abs(r.lat - lat) < 1e-4 && Math.abs(r.lng - lng) < 1e-4;
+  assert.ok(near(parseLocation("50.8448, 4.364"), 50.8448, 4.364), "décimal");
+  assert.ok(near(parseLocation(" -33.8568 151.2153 "), -33.8568, 151.2153), "décimal négatif");
+  assert.ok(near(parseLocation(`50°50'41.3"N 4°21'50.4"E`), 50.844806, 4.364), "DMS");
+  assert.ok(near(parseLocation(`33°51'24.5"S 151°12'55.1"E`), -33.856806, 151.215306), "DMS sud");
+  assert.ok(near(parseLocation("https://www.google.com/maps/place/Grand-Place/@50.8467,4.3499,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d50.846777!4d4.352360"), 50.846777, 4.35236), "épingle !3d!4d prioritaire");
+  assert.ok(near(parseLocation("https://www.google.com/maps/@50.8467,4.3499,17z"), 50.8467, 4.3499), "centre @");
+  assert.ok(near(parseLocation("https://maps.google.com/?q=50.8448,4.364"), 50.8448, 4.364), "q=");
+  assert.ok(near(parseLocation("https://www.google.com/maps/search/?api=1&query=50.8448%2C4.364"), 50.8448, 4.364), "query= encodé");
+  assert.equal(parseLocation("https://maps.app.goo.gl/AbCdEf123"), null, "lien court");
+  assert.equal(parseLocation("Grand-Place Bruxelles"), null, "adresse");
+  assert.equal(parseLocation("95, 4"), null, "hors limites");
+  assert.equal(parseLocation(""), null);
+  console.log("Tests lieu saisi OK");
+}

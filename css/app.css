@@ -304,3 +304,27 @@ dialog.lightbox { max-width: 640px; width: calc(100% - 20px); background: #111; 
 .lb-actions .btn.ghost { background: #2a2a2a; color: #fff; border-color: #3a3a3a; }
 .lb-actions [data-action="album-close"] { grid-column: 1 / -1; }
 .flip { display: inline-flex; transform: scaleX(-1); }
+
+/* ---------- Choix du lieu sur la carte ---------- */
+.place-btns { display: flex; flex-direction: column; gap: 6px; }
+body.mp-open { overflow: hidden; }
+.mappick { position: fixed; inset: 0; z-index: 25; display: flex; flex-direction: column; background: var(--bg); padding-top: var(--safe-t); }
+.mp-top { display: flex; align-items: center; gap: 6px; padding: 8px 12px 8px 6px; }
+.mp-search { flex: 1; display: flex; gap: 6px; min-width: 0; }
+.mp-search input { flex: 1; min-width: 0; min-height: 40px; padding: 0 12px; font: inherit; font-size: 16px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.mp-results { position: absolute; z-index: 2; top: calc(58px + var(--safe-t)); left: 12px; right: 12px; margin: 0; padding: 4px; list-style: none; max-height: 50vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, .18); }
+.mp-results button { display: block; width: 100%; text-align: left; padding: 10px; font: inherit; font-size: 14.5px; color: var(--ink); background: none; border: 0; border-radius: 10px; cursor: pointer; }
+.mp-results button:hover, .mp-results button:focus-visible { background: var(--surface-2); }
+.mp-msg { padding: 10px; font-size: 14.5px; color: var(--ink-2); }
+.mp-map { flex: 1; position: relative; z-index: 0; background: var(--surface-2); }
+.mp-locate { position: absolute; z-index: 1; right: 12px; bottom: calc(84px + var(--safe-b)); width: 44px; height: 44px; display: grid; place-items: center;
+  color: var(--hero); background: var(--surface); border: 1px solid var(--line); border-radius: 50%; box-shadow: var(--shadow); cursor: pointer; }
+.mp-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px calc(10px + var(--safe-b)); background: var(--surface); border-top: 1px solid var(--line); }
+.mp-info { min-width: 0; line-height: 1.35; }
+.mp-pin { background: none; border: 0; }
+.mp-pin::before { content: ""; position: absolute; left: 3px; top: 0; width: 24px; height: 24px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+  background: var(--accent); border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, .35); }
+.mp-pin.other::before { background: var(--hero); opacity: .85; }
+.mp-pin span { position: absolute; left: 1px; top: 2px; width: 28px; text-align: center; font: 700 11px/20px system-ui, sans-serif; color: #fff; }
+.mp-zone { fill: var(--accent); fill-opacity: .15; stroke: var(--accent); stroke-width: 2; }
