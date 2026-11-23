@@ -10,7 +10,7 @@ Jeu de piste GPS par équipes pour familles et amis. Propriétaire : Cédric. R�
 - Base : `supabase/schema.sql` (RLS, RPC `find_game`, `claim_team`, `take_over`, table `team_relay`, bucket `photos`). Projet Supabase : voir `js/config.js`.
 
 ## Décisions prises (voir le cahier des charges)
-- Pas de compte : session anonyme Supabase ; l'organisateur peut ajouter son e-mail.
+- Joueurs sans compte (session anonyme Supabase). Seuls les **administrateurs** créent parcours et parties : compte e-mail + mot de passe créé dans Supabase, e-mail listé dans `public.admins`, vérifié par la base (`is_admin()` dans les politiques RLS). Connexion dans l'onglet « Plus » ; `adopt_content` récupère les données de la session anonyme du téléphone. En démo, le téléphone principal est admin, les téléphones simulés non.
 - Capitaine = premier téléphone qui prend une équipe libre ; « Passer le relais » par QR code.
 - Le téléphone du capitaine fait foi (local d'abord) ; l'organisateur valide photos/vidéos (`judgments`).
 - Ordre des étapes circulaire et décalé par équipe ; étape finale commune.
@@ -27,4 +27,4 @@ Incrémenter `VERSION` dans `sw.js` à chaque déploiement, puis pousser sur `ma
 ## Prochaines étapes
 - Test terrain réel (GPS, boussole, hors ligne, relais) et corrections.
 - Parcours réel du week-end familial de mai 2027.
-- CAPTCHA anonyme avant ouverture à d'autres familles.
+- CAPTCHA anonyme avant ouverture à d'autres familles (il faudra alors aussi passer le jeton CAPTCHA à `signInWithPassword`).

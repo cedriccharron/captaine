@@ -22,6 +22,7 @@ Si `js/config.js` est vide, tout reste dans le navigateur. Pour essayer à plusi
 2. *Authentication > Sign In / Providers* : active **Allow anonymous sign-ins**.
 3. *SQL Editor > New query* : colle le contenu de `supabase/schema.sql`, puis **Run**. Le script peut être relancé sans danger.
 4. *Project Settings > API* : copie l'URL du projet et la clé **anon / publishable** dans `js/config.js`.
+4 bis. **Comptes administrateurs** (seuls à pouvoir créer des parcours et lancer des parties) : *Authentication > Users > Add user > Create new user*, avec e-mail, mot de passe et **Auto Confirm User** coché. Puis dans le *SQL Editor* : `insert into public.admins (email) values ('adresse@exemple.be');` (en minuscules). L'admin se connecte dans l'app, onglet **Plus**. À sa première connexion sur un téléphone, les parcours créés avant sur ce téléphone passent sur son compte.
 5. Avant d'ouvrir l'app à d'autres familles : activer un CAPTCHA (*Authentication > Attack Protection*) pour éviter les abus de comptes anonymes.
 
 ## Mettre en ligne (GitHub Pages)

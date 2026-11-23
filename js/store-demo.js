@@ -103,6 +103,9 @@ export function createDemoStore() {
     mode: "demo",
     me,
     async init() { homeId(); return { user: { id: me() } }; },
+    // En démo, ce téléphone est administrateur ; un « téléphone simulé » de capitaine ne l'est pas.
+    isAdmin: () => !sessionStorage.getItem(ALIAS),
+    account: () => ({ email: null, admin: !sessionStorage.getItem(ALIAS) }),
 
     // Bascule « téléphone simulé » (démo uniquement).
     isAlias: () => !!sessionStorage.getItem(ALIAS),

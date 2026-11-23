@@ -48,6 +48,15 @@ export async function createSupabaseStore() {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
   });
   let userId = null;
+  let account = readJSON("captaine-account", { email: null, admin: false }); // dernier état connu (hors ligne)
+  const remember = (session, admin) => {
+    userId = session.user.id;
+    account = { email: session.user.is_anonymous ? null : session.user.email, admin: !!admin };
+    writeJSON("captaine-user", userId);
+    writeJSON("captaine-account", account);
+  };
+  // Seuls les comptes de la liste public.admins peuvent créer parcours et parties (vérifié par la base).
+  const checkAdmin = async (session) => !session.user.is_anonymous && must(await sb.rpc("is_admin")) === true;
 
   const must = ({ data, error }) => {
     if (error) throw new Error(translate(error.message));
@@ -106,6 +115,8 @@ export async function createSupabaseStore() {
   return {
     mode: "cloud",
     me: () => userId,
+    isAdmin: () => account.admin,
+    account: () => ({ ...account }),
 
     async init() {
       let { data: { session } } = await sb.auth.getSession();
@@ -113,8 +124,11 @@ export async function createSupabaseStore() {
         try { session = must(await sb.auth.signInAnonymously()).session; }
         catch (e) { if (!isNetworkError(e)) throw e; }
       }
-      userId = session?.user?.id || readJSON("captaine-user", null);
-      if (userId) writeJSON("captaine-user", userId);
+      if (session) {
+        let admin = account.admin && !session.user.is_anonymous;
+        try { admin = await checkAdmin(session); } catch (e) { if (!isNetworkError(e)) throw e; }
+        remember(session, admin);
+      } else userId = readJSON("captaine-user", null);
       if (!userId) throw new Error("Première ouverture : connecte-toi à internet");
       flush();
       return { user: { id: userId } };
@@ -240,9 +254,24 @@ export async function createSupabaseStore() {
       return data;
     },
 
-    // « Sécuriser mes parcours » : rattache un e-mail à la session anonyme.
-    async linkEmail(email) {
-      must(await sb.auth.updateUser({ email }));
+    // Connexion d'un administrateur. Renvoie le nombre de parcours et parties récupérés
+    // de la session anonyme de ce téléphone. Un compte non admin est refusé et la session
+    // anonyme précédente est remise en place (le capitaine garde son équipe).
+    async signIn(email, password) {
+      const { data: { session: prev } } = await sb.auth.getSession();
+      const session = must(await sb.auth.signInWithPassword({ email, password })).session;
+      if (!(await checkAdmin(session).catch(() => false))) {
+        await sb.auth.signOut({ scope: "local" });
+        if (prev) await sb.auth.setSession({ access_token: prev.access_token, refresh_token: prev.refresh_token });
+        throw new Error("Ce compte n'est pas administrateur");
+      }
+      remember(session, true);
+      return prev?.user?.is_anonymous ? must(await sb.rpc("adopt_content", { p_from: prev.user.id })) : 0;
+    },
+    async signOut() {
+      must(await sb.auth.signOut({ scope: "local" }));
+      remember(must(await sb.auth.signInAnonymously()).session, false);
+      localStorage.removeItem("captaine-all");
     },
   };
 }
@@ -251,6 +280,8 @@ function translate(msg) {
   const map = {
     "Anonymous sign-ins are disabled": "Active « Allow anonymous sign-ins » dans Supabase (Authentication)",
     "JWT expired": "Session expirée, recharge l'app",
+    "Invalid login credentials": "E-mail ou mot de passe incorrect",
+    "Email not confirmed": "Adresse e-mail pas encore confirmée",
   };
   return map[msg] || msg;
 }

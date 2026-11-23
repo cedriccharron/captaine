@@ -14,7 +14,7 @@ import {
 } from "./game.js";
 import { THEMES, theme, applyTheme, TEAM_COLORS } from "./themes.js";
 
-const VERSION = "0.3.1 (jalon 3)";
+const VERSION = "0.4.0 (jalon 3)";
 const $ = (s, root = document) => root.querySelector(s);
 const POS_EVERY_MS = 30000;      // envoi de la position du capitaine
 const STALE_MS = 2 * 60000;      // au-delà : « hors réseau »
@@ -120,6 +120,7 @@ function render() {
     else if (a === "games") { html = viewGames(); tab = "games"; applyTheme("explo"); }
     else if (a === "more") { html = viewMore(); tab = "more"; applyTheme("explo"); }
     else if (a === "join") { html = viewJoin(b, query); applyTheme(S.join?.theme || "explo"); }
+    else if (a === "c" && !S.store.isAdmin()) html = adminOnly();
     else if (a === "c" && b && c === "theme") html = viewTheme(b);
     else if (a === "c" && b && c === "start") html = viewStart(b);
     else if (a === "c" && b && c === "s" && d) html = viewStepForm(b, d);
@@ -145,6 +146,8 @@ function render() {
   main.innerHTML = demoBar() + html;
   nav.hidden = !tab;
   for (const el of nav.querySelectorAll("a")) el.classList.toggle("active", el.dataset.tab === tab);
+  const home = nav.querySelector('[data-tab="courses"] span');
+  if (home) home.textContent = S.store.isAdmin() ? "Parcours" : "Accueil";
   syncLive(liveGame);
   syncSensors(playGame);
   if (playGame) updateLive();
@@ -163,6 +166,11 @@ function demoBar() {
   if (S.store.mode !== "demo" || !S.store.isAlias()) return "";
   return `<div class="alias-bar">${icon("walk", 16)} <span class="grow">Téléphone simulé d'un capitaine</span>
     <button class="btn small ghost" data-action="demo-home">Revenir à l'organisateur</button></div>`;
+}
+
+function adminOnly() {
+  return `<div class="empty"><p>La création de parcours est réservée aux administrateurs.</p>
+    <a class="btn primary" href="#/more">Connexion administrateur</a><a class="btn ghost" href="#/">Retour</a></div>`;
 }
 
 function notFound() {
@@ -200,6 +208,7 @@ function courseLength(c) {
 
 function viewCourses() {
   const list = S.data.courses;
+  if (!S.store.isAdmin()) return viewPlayerHome();
   return `${top({ title: "Mes parcours", sub: "Crée un jeu de piste, puis lance une partie", actions: `<a class="btn small primary" href="#/join">Rejoindre</a>` })}
     ${list.length ? list.map((c) => {
       const t = theme(c.theme);
@@ -217,6 +226,17 @@ function viewCourses() {
     }).join("") : `<div class="empty"><p>Aucun parcours pour l'instant.</p></div>`}
     <button class="fab" data-action="new-course" aria-label="Créer un parcours">${icon("plus", 26)}</button>
     <p class="center small muted pad">Astuce : place tes étapes depuis chez toi avec « Sur la carte », ou sur le terrain avec « Ma position ».</p>`;
+}
+
+// Accueil des joueurs (pas administrateurs) : rejoindre une partie avec son code.
+function viewPlayerHome() {
+  return `${top({ title: "Cap'taine", sub: "Jeu de piste GPS en équipes" })}
+    <section class="panel center">
+      <h2>Rejoindre une partie</h2>
+      <p class="small muted">Demande le code de la partie à l'organisateur, ou scanne son QR code.</p>
+      <a class="btn primary big block" href="#/join">Entrer le code</a>
+    </section>
+    <p class="center small muted pad">Tu organises le jeu ? <a href="#/more">Connexion administrateur</a></p>`;
 }
 
 // ---------- Parcours : éditeur ---------------------------------------------
@@ -1090,7 +1110,7 @@ function viewGames() {
         <span class="grow"><strong>${esc(g.course.name)}</strong><br>
         <span class="small muted">${role} · ${fmtDateTime(g.created_at)} · ${status[g.status]}${g.settings?.sim ? " · simulation" : ""}</span></span>
         ${best ? `<span class="pts">${fmtNum((team ? teamScore(g, team) : best).won)} pts</span>` : ""}</a>`;
-    }).join("")}</div>` : `<div class="empty"><p>Aucune partie pour l'instant.</p><a class="btn primary" href="#/">Choisir un parcours</a></div>`}`;
+    }).join("")}</div>` : `<div class="empty"><p>Aucune partie pour l'instant.</p>${S.store.isAdmin() ? `<a class="btn primary" href="#/">Choisir un parcours</a>` : `<a class="btn primary" href="#/join">Rejoindre une partie</a>`}</div>`}`;
 }
 
 // ---------- Plus ---------------------------------------------------------------------
@@ -1104,22 +1124,44 @@ function viewMore() {
       <ul class="small"><li>Autorise la localisation et la boussole quand l'iPhone le demande.</li>
       <li>Garde l'app ouverte à l'écran : sur iPhone, le GPS d'une app web s'arrête écran éteint.</li>
       <li>Pense à charger le téléphone du capitaine avant de partir.</li></ul></section>
-    ${S.store.mode === "cloud" ? `<section class="panel"><h2>Sécuriser mes parcours</h2>
-      <p class="small muted">Tu joues sans compte. Ajoute ton e-mail pour retrouver tes parcours sur un autre téléphone.</p>
-      <form id="email-form" class="inline-form"><input name="email" type="email" required placeholder="ton@email.be" autocomplete="email"><button class="btn primary" type="submit">Ajouter</button></form></section>` : ""}
+    ${S.store.mode === "cloud" ? viewAccount() : ""}
     ${S.store.mode === "demo" ? `<section class="panel"><h2>Mode démo</h2>
       <p class="small muted">Tout est enregistré dans ce navigateur. Pour essayer à plusieurs équipes : lance une partie à 2 équipes ou plus, puis « Simuler le téléphone d'un capitaine » dans la salle d'attente.</p>
       <p class="center"><button class="btn small ghost" data-action="demo-reset">Réinitialiser les données de démo</button></p></section>` : ""}
     <p class="center small muted">Cap'taine ${VERSION} · ${S.store.mode === "cloud" ? "en ligne" : "démo"}</p>`;
 }
 
+function viewAccount() {
+  const acc = S.store.account();
+  if (acc.admin) return `<section class="panel"><h2>Compte administrateur</h2>
+    <p class="small">Connecté : <strong>${esc(acc.email || "")}</strong></p>
+    <p class="small muted">Tes parcours et tes parties te suivent sur tous les téléphones où tu te connectes.</p>
+    <button class="btn ghost block" data-action="sign-out">Se déconnecter</button></section>`;
+  return `<section class="panel"><h2>Espace administrateur</h2>
+    <p class="small muted">Pour créer des parcours et lancer des parties. Les joueurs n'ont pas besoin de compte.</p>
+    <form id="login-form">
+      <label class="field"><span>E-mail</span><input name="email" type="email" required autocomplete="username" inputmode="email" autocapitalize="none"></label>
+      <label class="field"><span>Mot de passe</span><input name="password" type="password" required autocomplete="current-password"></label>
+      <button class="btn primary block" type="submit">Se connecter</button>
+    </form>
+    <p class="small muted">Évite de te connecter sur le téléphone d'un capitaine pendant une partie.</p></section>`;
+}
+
 // ---------- Actions (clics) -------------------------------------------------------------
 const actions = {
   async "new-course"() {
+    if (!S.store.isAdmin()) { go("/more"); return; }
     const c = { id: uuid(), name: "Nouveau parcours", theme: "explo", created_at: new Date().toISOString(), defaults: { radius: 25, nav: "boussole" }, steps: [] };
     await persistCourse(c);
     S.data = await S.store.loadAll();
     go(`/c/${c.id}`);
+  },
+  async "sign-out"() {
+    if (!(await confirmDialog("Se déconnecter du compte administrateur sur ce téléphone ?", "Se déconnecter"))) return;
+    await S.store.signOut();
+    S.data = await S.store.loadAll();
+    toast("Déconnecté");
+    go("/");
   },
   async "delete-course"(el) {
     const c = course(el.dataset.id);
@@ -1475,9 +1517,15 @@ document.addEventListener("submit", async (e) => {
       toast("Message envoyé");
       return;
     }
-    if (form.id === "email-form") {
-      await S.store.linkEmail(String(fd.get("email")).trim());
-      toast("Regarde tes e-mails pour confirmer l'adresse");
+    if (form.id === "login-form") {
+      const btn = form.querySelector("button[type=submit]");
+      btn.disabled = true;
+      try {
+        const n = await S.store.signIn(String(fd.get("email")).trim().toLowerCase(), String(fd.get("password")));
+        S.data = await S.store.loadAll();
+        toast(n ? `Connecté · ${plural(n, "élément récupéré", "éléments récupérés")} de ce téléphone` : "Connecté");
+        go("/");
+      } finally { btn.disabled = false; }
       return;
     }
     if (form.id === "answer-form") {

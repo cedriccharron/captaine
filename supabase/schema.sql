@@ -1,7 +1,12 @@
--- Cap'taine — schéma Supabase (jalon 2)
+-- Cap'taine — schéma Supabase (jalon 3)
 -- À coller tel quel dans Supabase > SQL Editor > New query, puis « Run ».
 -- Prérequis : Authentication > Sign In / Providers > « Allow anonymous sign-ins » activé.
 -- Le script peut être relancé sans danger (il ne supprime aucune donnée).
+--
+-- Comptes administrateurs (seuls à pouvoir créer des parcours et lancer des parties) :
+--   1. Authentication > Users > Add user > Create new user : e-mail + mot de passe, cocher « Auto Confirm User ».
+--   2. SQL Editor : insert into public.admins (email) values ('adresse@exemple.be');
+-- Les joueurs, eux, restent anonymes.
 
 -- ---------- Tables ----------------------------------------------------------
 
@@ -56,6 +61,12 @@ create table if not exists public.messages (
   created_at  timestamptz not null default now()
 );
 
+-- Adresses e-mail des administrateurs. Gérée à la main dans le SQL Editor (aucun accès depuis l'app).
+create table if not exists public.admins (
+  email     text primary key check (email = lower(email)),
+  added_at  timestamptz not null default now()
+);
+
 create index if not exists teams_game_idx on public.teams (game_id);
 create index if not exists messages_game_idx on public.messages (game_id);
 
@@ -71,6 +82,14 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from teams where game_id = g and captain = auth.uid());
 $$;
 
+-- Administrateur = compte non anonyme, e-mail confirmé et présent dans public.admins.
+create or replace function public.is_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from auth.users u join admins a on a.email = lower(u.email)
+    where u.id = auth.uid() and u.email_confirmed_at is not null and not coalesce(u.is_anonymous, false));
+$$;
+
 -- ---------- Sécurité (Row Level Security) -------------------------------------------
 
 alter table public.courses  enable row level security;
@@ -78,6 +97,7 @@ alter table public.games    enable row level security;
 alter table public.teams    enable row level security;
 alter table public.messages enable row level security;
 alter table public.team_relay enable row level security;
+alter table public.admins   enable row level security;  -- aucune politique : invisible depuis l'app
 
 drop policy if exists relay_captain_read on public.team_relay;
 create policy relay_captain_read on public.team_relay for select
@@ -85,11 +105,11 @@ create policy relay_captain_read on public.team_relay for select
 
 drop policy if exists courses_owner on public.courses;
 create policy courses_owner on public.courses for all
-  using (owner = auth.uid()) with check (owner = auth.uid());
+  using (owner = auth.uid()) with check (owner = auth.uid() and public.is_admin());
 
 drop policy if exists games_owner on public.games;
 create policy games_owner on public.games for all
-  using (owner = auth.uid()) with check (owner = auth.uid());
+  using (owner = auth.uid()) with check (owner = auth.uid() and public.is_admin());
 drop policy if exists games_captain_read on public.games;
 create policy games_captain_read on public.games for select
   using (public.is_game_captain(id));
@@ -183,6 +203,27 @@ begin
   return jsonb_build_object('game_id', v_team.game_id, 'team_id', v_team.id);
 end $$;
 
+-- À la première connexion d'un admin sur un téléphone : récupère les parcours et parties
+-- créés avant, avec la session anonyme de ce téléphone.
+create or replace function public.adopt_content(p_from uuid) returns int
+language plpgsql security definer set search_path = public as $$
+declare n int; m int;
+begin
+  if not public.is_admin() then
+    raise exception 'Réservé aux administrateurs';
+  end if;
+  if p_from = auth.uid() or not exists (select 1 from auth.users where id = p_from and coalesce(is_anonymous, false)) then
+    return 0;
+  end if;
+  update courses set owner = auth.uid() where owner = p_from;
+  get diagnostics n = row_count;
+  update games set owner = auth.uid() where owner = p_from;
+  get diagnostics m = row_count;
+  return n + m;
+end $$;
+
+grant execute on function public.is_admin() to authenticated;
+grant execute on function public.adopt_content(uuid) to authenticated;
 grant execute on function public.find_game(text) to authenticated;
 grant execute on function public.claim_team(uuid, text) to authenticated;
 grant execute on function public.take_over(text, text) to authenticated;
