@@ -1,7 +1,7 @@
 // Stockage du mode démo : tout reste dans ce navigateur, mais plusieurs « téléphones »
 // peuvent être simulés (onglets, ou bascule organisateur / capitaine dans le même onglet).
 // Même interface que store-supabase.js.
-import { uuid } from "./util.js";
+import { uuid, mediaUrl } from "./util.js";
 import { offset } from "./geo.js";
 import { makeCode } from "./game.js";
 
@@ -23,11 +23,11 @@ export function sampleCourse() {
       clue: "Quittez l'eau vers le soleil du matin et cherchez un banc à l'ombre d'un grand arbre.",
       question: "Faites une photo de toute l'équipe assise sur le banc, chacun imitant un animal différent.",
       points: 50 },
-    { title: "Le vieux kiosque", ...at(230, 140), nav: "boussole", challenge: "enigme",
-      question: "On y jouait de la musique le dimanche. De quelle couleur est son toit ?",
-      answers: ["vert", "verte"], hint: "Lève les yeux !", points: 50 },
-    { title: "L'allée des statues", ...at(200, 230), nav: "radar", challenge: "balise",
-      question: "Bravo, vous avez trouvé l'allée ! Une balise gratuite pour souffler un peu.", points: 30 },
+    { title: "Le vieux kiosque", ...at(230, 140), nav: "boussole", challenge: "video",
+      question: "On y jouait de la musique le dimanche : filmez votre équipe qui chante un refrain sous le kiosque (15 secondes).",
+      points: 50 },
+    { title: "L'allée des statues", ...at(200, 230), nav: "radar", challenge: "jeu", game: { kind: "niveau", target: 8 },
+      question: "Devenez des statues ! Le capitaine garde le téléphone parfaitement à plat pendant 8 secondes, sans trembler.", points: 50 },
     { title: "La porte du parc", ...at(260, 310), nav: "boussole", challenge: "enigme",
       question: "Combien de lettres compte le mot gravé au-dessus de la grille ?",
       answers: ["5", "cinq"], hint: "Le mot est en latin.", points: 50 },
@@ -240,8 +240,9 @@ export function createDemoStore() {
     },
     pendingUploads: () => 0,
 
-    putMedia: (id, value) => idb("readwrite", (s) => s.put(value, id)),
-    getMedia: (id) => idb("readonly", (s) => s.get(id)),
+    putMedia: (id, blob) => idb("readwrite", (s) => s.put(blob, id)),
+    async getMedia(id) { return mediaUrl(id, await idb("readonly", (s) => s.get(id))); },
+    async getMediaBlob(id) { const v = await idb("readonly", (s) => s.get(id)); return typeof v === "string" ? (await import("./util.js")).dataUrlToBlob(v) : v; },
 
     async reset() {
       localStorage.removeItem(KEY);

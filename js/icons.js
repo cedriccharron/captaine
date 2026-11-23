@@ -24,6 +24,7 @@ const P = {
   download: '<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>',
   share: '<path d="M12 4v11M7.5 8.5 12 4l4.5 4.5"/><path d="M6 12H5v8h14v-8h-1"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  video: '<rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="m15.5 10 6-3.5v11l-6-3.5"/>',
   hourglass: '<path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9"/>',
 };
 

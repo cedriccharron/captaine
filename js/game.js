@@ -7,8 +7,13 @@ export const LOCK_MS = 30000;    // durée de la pause
 export const CHALLENGES = {
   enigme: "Énigme",
   photo: "Défi photo",
-  balise: "Balise (arrivée seule)",
+  video: "Défi vidéo",
+  jeu: "Mini-jeu",
+  balise: "Balise",
 };
+export const CHALLENGE_LONG = { ...CHALLENGES, balise: "Balise (arrivée seule)" };
+// Épreuves dont les points attendent la validation de l'organisateur.
+export const needsJudge = (s) => s.challenge === "photo" || s.challenge === "video";
 export const NAVS = {
   boussole: "Boussole",
   indice: "Indice seul",
@@ -100,7 +105,8 @@ export function validateStep(step) {
     if (!step.question?.trim()) errors.push("Écris l'énigme");
     if (!step.answers?.length) errors.push("Indique au moins une réponse acceptée");
   }
-  if (step.challenge === "photo" && !step.question?.trim()) errors.push("Décris le défi photo");
+  if (needsJudge(step) && !step.question?.trim()) errors.push(`Décris le défi ${step.challenge === "video" ? "vidéo" : "photo"}`);
+  if (step.challenge === "jeu" && !step.game?.kind) errors.push("Choisis le mini-jeu");
   if (step.nav === "indice" && !step.clue?.trim()) errors.push("Écris l'indice qui mène à l'étape");
   return errors;
 }

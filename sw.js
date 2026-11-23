@@ -1,9 +1,9 @@
 // Service worker : garde l'app disponible sans réseau.
 // Incrémente VERSION à chaque mise en ligne pour forcer la mise à jour.
-const VERSION = "captaine-0.2.0";
+const VERSION = "captaine-0.3.0";
 const SHELL = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
-  "js/app.js", "js/config.js", "js/util.js", "js/icons.js", "js/geo.js", "js/game.js", "js/themes.js", "js/store-demo.js", "js/store-supabase.js", "js/vendor/qrcode.mjs", "js/vendor/supabase.js",
+  "js/app.js", "js/config.js", "js/util.js", "js/icons.js", "js/geo.js", "js/game.js", "js/themes.js", "js/store-demo.js", "js/store-supabase.js", "js/minigames.js", "js/vendor/qrcode.mjs", "js/vendor/supabase.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
 ];
 

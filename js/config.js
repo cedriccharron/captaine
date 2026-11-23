@@ -1,7 +1,7 @@
 // Configuration de Cap'taine.
 // Laisse ces deux valeurs vides pour utiliser le mode démo (tout reste dans le téléphone).
-// Le mode en ligne (plusieurs équipes, carte live) arrive au jalon 2.
+// Les deux valeurs se trouvent dans Supabase > Project Settings > API.
 export const CONFIG = {
-  SUPABASE_URL: "",       // ex. "https://abcdxyz.supabase.co"
-  SUPABASE_ANON_KEY: "",  // clé « anon » ou « publishable » (publique, sans risque)
+  SUPABASE_URL: "https://zzhzdiuoonhvxndmziju.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_drMmv3EaTzTHVFrFVXajZQ_zQETTMbB", // clé publique (sans risque)
 };

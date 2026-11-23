@@ -2,18 +2,19 @@
 import { CONFIG } from "./config.js";
 import { createDemoStore } from "./store-demo.js";
 import { icon } from "./icons.js";
-import { esc, uuid, fmtNum, plural, fmtDistance, fmtDuration, fmtDateTime, initials, toast, confirmDialog, shrinkImage } from "./util.js";
+import { esc, uuid, fmtNum, plural, fmtDistance, fmtDuration, fmtDateTime, initials, toast, confirmDialog, prepareMedia } from "./util.js";
+import { GAMES, requestSensors, runGame } from "./minigames.js";
 import {
   distance, bearing, offset, warmth, WARMTH_LABEL, cardinal,
   watchPosition, currentPosition, compassNeedsPermission, requestCompass, watchHeading, keepAwake,
 } from "./geo.js";
 import {
-  CHALLENGES, NAVS, LEVELS, HINT_COST, parseAnswers, stepPoints, currentStepId,
+  CHALLENGES, CHALLENGE_LONG, needsJudge, NAVS, LEVELS, HINT_COST, parseAnswers, stepPoints, currentStepId,
   lockRemaining, registerAnswer, validateStep, teamPlay, teamScore, ranking, pendingCount,
 } from "./game.js";
 import { THEMES, theme, applyTheme, TEAM_COLORS } from "./themes.js";
 
-const VERSION = "0.2.0 (jalon 2)";
+const VERSION = "0.3.0 (jalon 3)";
 const $ = (s, root = document) => root.querySelector(s);
 const POS_EVERY_MS = 30000;      // envoi de la position du capitaine
 const STALE_MS = 2 * 60000;      // au-delà : « hors réseau »
@@ -24,7 +25,9 @@ const S = {
   draft: null,      // brouillon d'étape en cours d'édition
   startForm: null,  // brouillon du formulaire de lancement
   flash: null,      // message de réussite affiché au-dessus de l'étape suivante
-  photo: null,      // photo prise, pas encore envoyée
+  media: null,      // photo ou vidéo prise, pas encore envoyée
+  minigame: null,   // mini-jeu en cours {stepId, stop, failed}
+  album: null,      // album ouvert {gameId, index}
   join: null,       // résultat de la recherche par code
   relay: null,      // code « Passer le relais » affiché
   live: { gameId: null, unsub: null },
@@ -94,7 +97,11 @@ function route() {
   return { parts: path.split("/").filter(Boolean), query: new URLSearchParams(qs || "") };
 }
 const go = (path) => { location.hash = path; };
-window.addEventListener("hashchange", () => { S.pendingRender = false; render(); window.scrollTo(0, 0); });
+window.addEventListener("hashchange", () => {
+  S.pendingRender = false;
+  if (S.minigame?.stop) { S.minigame.stop(); S.minigame = null; }
+  render(); window.scrollTo(0, 0);
+});
 
 function render() {
   const main = $("#main");
@@ -289,7 +296,7 @@ function viewStepForm(cid, sid) {
     S.draft = { key, isNew: sid === "new", step: existing ? structuredClone(existing) : newStep(c), answersText: (existing?.answers || []).join("\n"), errors: [] };
   }
   const s = S.draft.step;
-  const seg = (field, opts) => `<div class="seg">${Object.entries(opts).map(([k, v]) =>
+  const seg = (field, opts, cls = "") => `<div class="seg ${cls}">${Object.entries(opts).map(([k, v]) =>
     `<button type="button" class="${s[field] === k ? "on" : ""}" data-action="draft-set" data-f="${field}" data-v="${k}" aria-pressed="${s[field] === k}">${v}</button>`).join("")}</div>`;
   const placed = Number.isFinite(s.lat);
   return `${top({ title: S.draft.isNew ? `Nouvelle ${w.step}` : (s.title || cap(w.step)), back: `#/c/${cid}`,
@@ -317,7 +324,7 @@ function viewStepForm(cid, sid) {
 
     <section class="panel">
       <h2>Sur place</h2>
-      ${seg("challenge", CHALLENGES)}
+      ${seg("challenge", CHALLENGES, "wrap")}
       ${s.challenge === "enigme" ? `
         <label class="field"><span>Énigme</span><textarea data-f="question" rows="3" maxlength="500">${esc(s.question)}</textarea></label>
         <label class="field"><span>Version enfant (facultatif)</span><textarea data-f="kidQuestion" rows="2" maxlength="400" placeholder="Une version plus simple pour les plus jeunes">${esc(s.kidQuestion)}</textarea></label>
@@ -325,9 +332,15 @@ function viewStepForm(cid, sid) {
           <span class="hint">Majuscules, accents et espaces sont ignorés.</span></label>
         <label class="field"><span>Indice d'énigme (coûte ${HINT_COST} pts)</span><input data-f="hint" value="${esc(s.hint)}" maxlength="200"></label>
         <label class="check"><input type="checkbox" data-f="needOnSite" ${s.needOnSite ? "checked" : ""}> Réponse acceptée seulement sur place</label>`
-      : s.challenge === "photo" ? `
-        <label class="field"><span>Consigne du défi photo</span><textarea data-f="question" rows="3" maxlength="400" placeholder="Ex. Une pyramide humaine devant la roue du moulin">${esc(s.question)}</textarea></label>
-        <p class="small muted">Les points restent « en attente » jusqu'à ta validation de la photo.</p>`
+      : needsJudge(s) ? `
+        <label class="field"><span>Consigne du défi ${s.challenge === "video" ? "vidéo" : "photo"}</span><textarea data-f="question" rows="3" maxlength="400" placeholder="${s.challenge === "video" ? "Ex. Chantez le refrain de votre chanson d'équipe devant la fontaine" : "Ex. Une pyramide humaine devant la roue du moulin"}">${esc(s.question)}</textarea></label>
+        <p class="small muted">Les points restent « en attente » jusqu'à ta validation.${s.challenge === "video" ? " Vidéo courte conseillée (15 secondes) : au-delà de 48 Mo, elle est refusée." : ""}</p>`
+      : s.challenge === "jeu" ? `
+        <div class="seg wrap">${Object.entries(GAMES).map(([k, gm]) => `<button type="button" class="${s.game?.kind === k ? "on" : ""}" data-action="draft-game" data-v="${k}" aria-pressed="${s.game?.kind === k}">${gm.name}</button>`).join("")}</div>
+        ${s.game?.kind ? `<p class="small muted">${esc(GAMES[s.game.kind].desc)}.</p>
+          <label class="field"><span>Objectif</span><select data-game-target>${GAMES[s.game.kind].options.map((n) => `<option value="${n}" ${s.game.target === n ? "selected" : ""}>${n} ${GAMES[s.game.kind].unit}</option>`).join("")}</select></label>
+          <label class="field"><span>Consigne (facultatif)</span><textarea data-f="question" rows="2" maxlength="300" placeholder="${esc(GAMES[s.game.kind].hint(s.game.target))}">${esc(s.question)}</textarea></label>
+          ${s.game.kind === "cri" ? `<p class="small muted">Le capitaine devra autoriser le micro. Rien n'est enregistré : seul le volume est mesuré.</p>` : ""}` : `<p class="small muted">Choisis un mini-jeu.</p>`}`
       : `<label class="field"><span>Message à l'arrivée (facultatif)</span><textarea data-f="question" rows="2" maxlength="300">${esc(s.question)}</textarea></label>`}
       <label class="field"><span>Points</span><select data-f="points" data-num>${[20, 30, 50, 80, 100].map((p) => `<option value="${p}" ${s.points === p ? "selected" : ""}>${p} points</option>`).join("")}</select></label>
       <label class="check"><input type="checkbox" data-f="final" ${s.final ? "checked" : ""}> ${cap(w.step)} finale (toujours jouée en dernier)</label>
@@ -632,16 +645,34 @@ function viewNavigator(g, s) {
 }
 
 function viewChallenge(g, team, s, p) {
-  if (s.challenge === "photo") {
+  if (needsJudge(s)) {
+    const video = s.challenge === "video";
+    const m = S.media?.stepId === s.id ? S.media : null;
+    const input = `<input type="file" accept="${video ? "video/*" : "image/*"}" capture="environment" data-media-input="${s.id}" hidden>`;
     return `<section class="panel challenge">
-      <span class="kicker">Défi photo · ${s.points} pts</span>
+      <span class="kicker">Défi ${video ? "vidéo" : "photo"} · ${s.points} pts</span>
       <h2 class="q">${esc(levelQuestion(team, s))}</h2>
-      ${S.photo?.stepId === s.id
-        ? `<img class="photo-preview" src="${S.photo.data}" alt="Photo prise pour le défi">
-           <div class="row-actions"><label class="btn ghost">${icon("camera", 18)} Reprendre<input type="file" accept="image/*" capture="environment" data-photo="${s.id}" hidden></label>
-           <button class="btn primary" data-action="photo-send" data-g="${g.id}">Envoyer</button></div>`
-        : `<label class="btn primary block big">${icon("camera", 20)} Prendre la photo<input type="file" accept="image/*" capture="environment" data-photo="${s.id}" hidden></label>`}
-      <p class="small muted">L'organisateur validera la photo. Vous pouvez continuer sans attendre.</p>
+      ${m
+        ? `${m.kind === "video" ? `<video class="photo-preview" src="${m.url}" controls playsinline></video>` : `<img class="photo-preview" src="${m.url}" alt="Photo prise pour le défi">`}
+           <div class="row-actions"><label class="btn ghost">${icon(video ? "video" : "camera", 18)} Refaire${input}</label>
+           <button class="btn primary" data-action="media-send" data-g="${g.id}">Envoyer</button></div>`
+        : `<label class="btn primary block big">${icon(video ? "video" : "camera", 20)} ${video ? "Filmer" : "Prendre la photo"}${input}</label>`}
+      <p class="small muted">L'organisateur validera ${video ? "la vidéo" : "la photo"}. Vous pouvez continuer sans attendre.${video ? " Restez court : 15 secondes environ." : ""}</p>
+    </section>`;
+  }
+  if (s.challenge === "jeu") {
+    const gm = GAMES[s.game.kind];
+    const run = S.minigame?.stepId === s.id ? S.minigame : null;
+    return `<section class="panel challenge">
+      <span class="kicker">Mini-jeu · ${gm.name} · ${s.points} pts</span>
+      <h2 class="q">${esc(s.question?.trim() || gm.hint(s.game.target))}</h2>
+      ${s.game.kind === "niveau" ? `<div class="bubble-level" aria-hidden="true"><span class="bl-ring"></span><span class="bl-bubble" id="mg-bubble"></span></div>` : ""}
+      <div class="mg-meter" role="progressbar" aria-label="Progression" aria-valuemin="0" aria-valuemax="100" id="mg-meter"><span id="mg-bar"></span></div>
+      <p class="center mg-val" id="mg-val">${run?.failed ? "Raté ! On réessaie ?" : run ? "C'est parti !" : `Objectif : ${s.game.target} ${gm.unit}`}</p>
+      ${run && !run.failed
+        ? `<button class="btn ghost block" data-action="game-stop">Arrêter</button>`
+        : `<button class="btn primary block big" data-action="game-start" data-g="${g.id}" data-s="${s.id}">${icon("play", 20)} ${run?.failed ? "Réessayer" : "Commencer"}</button>`}
+      ${g.settings.sim ? `<button class="btn ghost block" data-action="game-sim" data-g="${g.id}" data-s="${s.id}">Réussir (simulation)</button>` : ""}
     </section>`;
   }
   const lock = lockRemaining(p);
@@ -855,7 +886,7 @@ function viewLive(g) {
       ${g.teams.flatMap((x) => Object.entries(x.progress).filter(([id, p]) => p.status === "pending" && !x.judgments?.[id]).map(([id, p]) => {
         const s = stepOf(g, id);
         return `<div class="validate">
-          <img data-media="${p.media}" data-gid="${g.id}" data-tid="${x.id}" alt="Photo du défi ${esc(s.title)}" class="thumb big">
+          ${mediaTag(g, x, p, "thumb big", `Défi ${s.title}`)}
           <p><span class="team-chip" style="background:${x.color}">${esc(x.name)}</span> <strong>${esc(s.title)}</strong><br><span class="small muted">${esc(s.question)}</span></p>
           <div class="row-actions"><button class="btn ghost" data-action="judge" data-v="refused" data-t="${x.id}" data-s="${id}">Refuser</button>
           <button class="btn primary" data-action="judge" data-v="done" data-t="${x.id}" data-s="${id}">Valider +${p.points} pts</button></div></div>`;
@@ -934,7 +965,7 @@ function viewEnd(g) {
       ${g.teams.flatMap((x) => Object.entries(x.progress).filter(([id, p]) => p.status === "pending" && !x.judgments?.[id]).map(([id, p]) => {
         const s = stepOf(g, id);
         return `<div class="validate">
-          <img data-media="${p.media}" data-gid="${g.id}" data-tid="${x.id}" alt="Photo du défi ${esc(s.title)}" class="thumb big">
+          ${mediaTag(g, x, p, "thumb big", `Défi ${s.title}`)}
           <p><span class="team-chip" style="background:${x.color}">${esc(x.name)}</span> <strong>${esc(s.title)}</strong><br><span class="small muted">${esc(s.question)}</span></p>
           <div class="row-actions"><button class="btn ghost" data-action="judge" data-v="refused" data-t="${x.id}" data-s="${id}">Refuser</button>
           <button class="btn primary" data-action="judge" data-v="done" data-t="${x.id}" data-s="${id}">Valider +${p.points} pts</button></div></div>`;
@@ -945,24 +976,98 @@ function viewEnd(g) {
         <span class="rank">${i + 1}</span><span class="team-dot small-dot" style="background:${r.team.color}">${esc(initials(r.team.name))}</span>
         <span class="grow"><strong>${esc(r.team.name)}</strong><br><span class="small muted">${r.done}/${r.total} ${t.words.steps}${r.team.finished_at ? " · terminé" : ""}${r.pending ? ` · ${r.pending} pts en attente` : ""}</span></span>
         <span class="pts">${fmtNum(r.won)} pts</span></li>`).join("")}</ol></section>`}
+    ${viewAlbum(g)}
     ${(mine ? [mine] : owner ? g.teams : []).map((x) => { const play = teamPlay(g, x); return `<section class="panel">
       <h2>${solo ? "Le parcours" : `Parcours : ${esc(x.name)}`}</h2>
       <ol class="recap">${play.order.map((id) => { const s = stepOf(g, id); const p = play.progress[id] || {}; return `<li>
         <span class="grow">${esc(s.title)}<br><span class="small muted">${CHALLENGES[s.challenge]}${p.hints ? " · indice" : ""}</span></span>
-        ${p.media && p.status !== "pending" ? `<img data-media="${p.media}" data-gid="${g.id}" data-tid="${x.id}" alt="" class="thumb">` : ""}
+        ${p.media && p.status !== "pending" ? mediaTag(g, x, p, "thumb", "") : ""}
         <span class="pts ${p.status || "todo"}">${p.status === "done" ? `+${p.points}` : p.status === "pending" ? "en attente" : p.status === "refused" ? "refusée" : p.status === "skipped" ? "passée" : "—"}</span></li>`; }).join("")}</ol>
     </section>`; }).join("")}
     <div class="pad row-gap">${owner ? `<a class="btn ghost" href="#/c/${g.course_id}/start">${icon("play", 18)} Rejouer</a>` : ""}
       ${owner && g.status !== "finished" ? `<a class="btn ghost" href="#/g/${g.id}/live">Retour à la carte</a>` : ""}<a class="btn primary" href="#/">Accueil</a></div>`;
 }
 
-// Charge les photos (stockées à part) dans les balises <img data-media>.
-async function hydrateMedia() {
-  for (const img of document.querySelectorAll("img[data-media]")) {
-    const id = img.dataset.media;
-    if (!id || img.src) continue;
-    try { const v = await S.store.getMedia(id, { gameId: img.dataset.gid, teamId: img.dataset.tid }); if (v) img.src = v; } catch { /* photo absente */ }
+function mediaTag(g, team, p, cls, alt) {
+  const attrs = `data-media="${p.media}" data-gid="${g.id}" data-tid="${team.id}" data-ext="${p.ext || "jpg"}"`;
+  return p.mediaType === "video"
+    ? `<video ${attrs} class="${cls}" controls playsinline preload="metadata"></video>`
+    : `<img ${attrs} class="${cls}" alt="${esc(alt)}">`;
+}
+
+// Charge les photos et vidéos (stockées à part) dans les balises <img|video data-media>.
+async function hydrateMedia(root = document) {
+  for (const el of root.querySelectorAll("[data-media]")) {
+    const id = el.dataset.media;
+    if (!id || el.getAttribute("src")) continue;
+    try {
+      const v = await S.store.getMedia(id, { gameId: el.dataset.gid, teamId: el.dataset.tid, ext: el.dataset.ext });
+      if (v) el.src = v;
+    } catch { /* média absent */ }
   }
+}
+
+// ---------- Album souvenir ------------------------------------------------------------
+function albumItems(g) {
+  return g.teams.flatMap((t) => Object.entries(teamPlay(g, t).progress)
+    .filter(([, p]) => p.media && p.status !== "refused")
+    .map(([sid, p]) => ({ team: t, step: stepOf(g, sid), p })))
+    .sort((a, b) => (a.p.solvedAt || 0) - (b.p.solvedAt || 0));
+}
+
+function viewAlbum(g) {
+  const items = albumItems(g);
+  if (!items.length) return "";
+  return `<section class="panel">
+    <div class="panel-head"><h2>${icon("camera", 18)} Album souvenir</h2><span class="small muted">${plural(items.length, "souvenir", "souvenirs")}</span></div>
+    <div class="album">${items.map((it, i) => `<button class="album-item" data-action="album-open" data-g="${g.id}" data-i="${i}" aria-label="Ouvrir : ${esc(it.step.title)}, ${esc(it.team.name)}">
+      ${it.p.mediaType === "video" ? `<video data-media="${it.p.media}" data-gid="${g.id}" data-tid="${it.team.id}" data-ext="${it.p.ext || "mp4"}" muted playsinline preload="metadata"></video><span class="play-badge">${icon("play", 16)}</span>`
+        : `<img data-media="${it.p.media}" data-gid="${g.id}" data-tid="${it.team.id}" data-ext="${it.p.ext || "jpg"}" alt="">`}
+      <span class="album-team" style="background:${it.team.color}">${esc(initials(it.team.name))}</span></button>`).join("")}</div>
+    <button class="btn ghost block" data-action="album-share-all" data-g="${g.id}">${icon("share", 18)} Partager tout l'album</button>
+  </section>`;
+}
+
+function openAlbum(g, i) {
+  const items = albumItems(g);
+  const n = items.length;
+  const it = items[((i % n) + n) % n];
+  S.album = { gameId: g.id, index: ((i % n) + n) % n };
+  const dlg = document.getElementById("dialog");
+  dlg.className = "lightbox";
+  dlg.innerHTML = `<div class="lb">
+    <div class="lb-media">${it.p.mediaType === "video"
+      ? `<video data-media="${it.p.media}" data-gid="${g.id}" data-tid="${it.team.id}" data-ext="${it.p.ext || "mp4"}" controls playsinline autoplay></video>`
+      : `<img data-media="${it.p.media}" data-gid="${g.id}" data-tid="${it.team.id}" data-ext="${it.p.ext || "jpg"}" alt="${esc(it.step.title)}">`}</div>
+    <p class="lb-cap"><span class="team-chip" style="background:${it.team.color}">${esc(it.team.name)}</span> ${esc(it.step.title)}<br><span class="small">${esc(it.step.question || "")}</span></p>
+    <div class="lb-actions">
+      <button class="btn ghost" data-action="album-nav" data-d="-1" aria-label="Précédent">${icon("back", 20)}</button>
+      <button class="btn primary" data-action="album-share-one">${icon("share", 18)} Enregistrer</button>
+      <button class="btn ghost" data-action="album-nav" data-d="1" aria-label="Suivant"><span class="flip">${icon("back", 20)}</span></button>
+      <button class="btn ghost" data-action="album-close">Fermer</button>
+    </div></div>`;
+  if (!dlg.open) dlg.showModal();
+  hydrateMedia(dlg);
+}
+
+async function shareMedia(g, items) {
+  const files = [];
+  for (const it of items) {
+    const blob = await S.store.getMediaBlob(it.p.media, { gameId: g.id, teamId: it.team.id, ext: it.p.ext });
+    const name = `${g.course.name}-${it.team.name}-${it.step.title}.${it.p.ext || "jpg"}`.replace(/[^\p{L}\p{N}.-]+/gu, "_");
+    files.push(new File([blob], name, { type: blob.type || (it.p.mediaType === "video" ? "video/mp4" : "image/jpeg") }));
+  }
+  if (navigator.canShare?.({ files })) {
+    await navigator.share({ files, title: g.course.name }).catch(() => {});
+    return;
+  }
+  // Repli : téléchargement fichier par fichier.
+  for (const f of files) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(f); a.download = f.name;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  toast(files.length > 1 ? "Fichiers téléchargés" : "Fichier téléchargé");
 }
 
 // ---------- Parties -------------------------------------------------------------------
@@ -1106,6 +1211,7 @@ const actions = {
   "show-code"(el) {
     const g = gameById(el.dataset.g);
     const dlg = document.getElementById("dialog");
+    dlg.className = "";
     dlg.innerHTML = `<form method="dialog" class="dlg center"><p>Code de la partie</p><div class="qr" data-qr="${esc(joinUrl(g.code))}"></div>
       <p class="code dark">${esc(g.code)}</p><div class="dlg-actions"><button value="ok" class="btn primary">Fermer</button></div></form>`;
     dlg.showModal();
@@ -1140,18 +1246,63 @@ const actions = {
     await pushTeam(g, team);
     render();
   },
-  async "photo-send"(el) {
+  async "media-send"(el) {
     const g = gameById(el.dataset.g);
     const team = myTeam(g);
-    const s = stepOf(g, S.photo.stepId);
+    const m = S.media;
+    const s0 = stepOf(g, m.stepId);
     const mediaId = uuid();
-    try { await S.store.putMedia(mediaId, S.photo.data, { gameId: g.id, teamId: team.id }); }
-    catch { toast("Photo non enregistrée : stockage plein", "error"); return; }
-    const p = prog(team, s.id);
-    Object.assign(p, { status: "pending", points: stepPoints(s, 0), media: mediaId, solvedAt: Date.now() });
-    S.photo = null;
-    S.flash = { text: `Photo envoyée : +${p.points} pts en attente de validation` };
+    el.disabled = true;
+    try { await S.store.putMedia(mediaId, m.blob, { gameId: g.id, teamId: team.id, ext: m.ext }); }
+    catch { toast("Média non enregistré : stockage du téléphone plein", "error"); el.disabled = false; return; }
+    const p = prog(team, s0.id);
+    Object.assign(p, { status: "pending", points: stepPoints(s0, 0), media: mediaId, mediaType: m.kind, ext: m.ext, solvedAt: Date.now() });
+    S.media = null;
+    S.flash = { text: `${m.kind === "video" ? "Vidéo" : "Photo"} envoyée : +${p.points} pts en attente de validation` };
     await afterProgress(g, team);
+  },
+  async "game-start"(el) {
+    const g = gameById(el.dataset.g);
+    const s0 = stepOf(g, el.dataset.s);
+    let stream = null;
+    try { stream = await requestSensors(s0.game.kind); }
+    catch (e) { toast(e.message, "error"); return; }
+    S.minigame?.stop?.();
+    S.minigame = { stepId: s0.id, failed: false, stop: null };
+    render();
+    const target = s0.game.target;
+    S.minigame.stop = runGame(s0.game.kind, target, {
+      stream,
+      onTick: ({ value, progress, extra }) => {
+        const bar = $("#mg-bar"); if (bar) bar.style.width = `${Math.round(progress * 100)}%`;
+        const meter = $("#mg-meter"); if (meter) { meter.setAttribute("aria-valuenow", Math.round(progress * 100)); meter.dataset.loud = extra?.loud ? "1" : ""; }
+        const val = $("#mg-val");
+        if (val) val.textContent = s0.game.kind === "secousse" ? `${value} / ${target} secousses` : `${fmtNum(value, 1)} / ${target} s`;
+        const bub = $("#mg-bubble");
+        if (bub && extra) bub.style.transform = `translate(${Math.max(-50, Math.min(50, extra.gamma * 3))}px, ${Math.max(-50, Math.min(50, extra.beta * 3))}px)`;
+      },
+      onDone: (ok) => minigameDone(g.id, s0.id, ok),
+    });
+  },
+  "album-open"(el) { openAlbum(gameById(el.dataset.g), Number(el.dataset.i)); },
+  "album-nav"(el) { openAlbum(gameById(S.album.gameId), S.album.index + Number(el.dataset.d)); },
+  "album-close"() { const d = document.getElementById("dialog"); d.close(); d.className = ""; },
+  async "album-share-one"() {
+    const g = gameById(S.album.gameId);
+    await shareMedia(g, [albumItems(g)[S.album.index]]);
+  },
+  async "album-share-all"(el) {
+    const g = gameById(el.dataset.g);
+    const items = albumItems(g);
+    toast(`Préparation de ${plural(items.length, "fichier", "fichiers")}…`);
+    await shareMedia(g, items);
+  },
+  "game-stop"() { S.minigame?.stop?.(); S.minigame = null; render(); },
+  async "game-sim"(el) { await minigameDone(el.dataset.g, el.dataset.s, true); },
+  "draft-game"(el) {
+    const kind = el.dataset.v;
+    S.draft.step.game = { kind, target: GAMES[kind].def };
+    render();
   },
   async "skip-step"(el) {
     const g = gameById(el.dataset.g);
@@ -1190,6 +1341,19 @@ const actions = {
     go("/");
   },
 };
+
+async function minigameDone(gid, sid, ok) {
+  const g = gameById(gid);
+  const team = myTeam(g);
+  if (!ok) { S.minigame = { stepId: sid, failed: true }; navigator.vibrate?.([60, 40, 60]); render(); return; }
+  S.minigame = null;
+  const s0 = stepOf(g, sid);
+  const p = prog(team, sid);
+  Object.assign(p, { status: "done", points: stepPoints(s0, 0), solvedAt: Date.now() });
+  navigator.vibrate?.(200);
+  S.flash = { text: `Mini-jeu réussi ! +${p.points} pts` };
+  await afterProgress(g, team);
+}
 
 async function moveStep(cid, i, dir) {
   const c = course(cid);
@@ -1251,12 +1415,15 @@ document.addEventListener("change", async (e) => {
     toast("Nom enregistré");
     return;
   }
-  if (el.dataset.photo && el.files?.[0]) {
+  if (el.dataset.mediaInput && el.files?.[0]) {
     try {
-      S.photo = { stepId: el.dataset.photo, data: await shrinkImage(el.files[0]) };
+      const m = await prepareMedia(el.files[0]);
+      S.media = { stepId: el.dataset.mediaInput, ...m };
       render();
     } catch (err) { toast(err.message, "error"); }
+    return;
   }
+  if (el.hasAttribute("data-game-target") && S.draft?.step.game) { S.draft.step.game.target = Number(el.value); render(); }
 });
 
 document.addEventListener("submit", async (e) => {

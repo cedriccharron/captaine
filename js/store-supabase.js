@@ -2,7 +2,7 @@
 // Le téléphone du capitaine reste la référence : ses envois partent d'une file d'attente
 // qui se vide dès que le réseau revient. Même interface que store-demo.js.
 import { CONFIG } from "./config.js";
-import { uuid } from "./util.js";
+import { uuid, mediaUrl, dataUrlToBlob } from "./util.js";
 
 const OUTBOX = "captaine-outbox";   // {teams: {teamId: patch}, media: [{id, gameId, teamId}]}
 const CACHE = "captaine-cache";     // dernières parties connues, pour jouer hors ligne
@@ -39,7 +39,8 @@ async function idb(mode, fn) {
     tx.onerror = () => reject(tx.error);
   });
 }
-const dataUrlToBlob = async (dataUrl) => (await fetch(dataUrl)).blob();
+const toBlob = (v) => (typeof v === "string" ? dataUrlToBlob(v) : v);
+const mediaPath = (m) => `${m.gameId}/${m.teamId}/${m.id}.${m.ext || "jpg"}`;
 
 export async function createSupabaseStore() {
   if (!window.supabase) await loadScript("js/vendor/supabase.js");
@@ -75,7 +76,8 @@ export async function createSupabaseStore() {
         try {
           const data = await idb("readonly", (s) => s.get(m.id));
           if (data) {
-            const { error } = await sb.storage.from("photos").upload(`${m.gameId}/${m.teamId}/${m.id}.jpg`, await dataUrlToBlob(data), { contentType: "image/jpeg", upsert: true });
+            const blob = toBlob(data);
+            const { error } = await sb.storage.from("photos").upload(mediaPath(m), blob, { contentType: blob.type || "image/jpeg", upsert: true });
             if (error && !/exists/i.test(error.message)) throw error;
           }
           const b = outbox(); b.media = b.media.filter((x) => x.id !== m.id); writeJSON(OUTBOX, b);
@@ -217,17 +219,25 @@ export async function createSupabaseStore() {
     pendingUploads: () => { const b = outbox(); return b.media.length + Object.keys(b.teams).length; },
 
     // Photos : gardées sur le téléphone, envoyées dès que possible.
-    async putMedia(id, dataUrl, { gameId, teamId } = {}) {
-      await idb("readwrite", (s) => s.put(dataUrl, id));
-      const box = outbox(); box.media.push({ id, gameId, teamId }); writeJSON(OUTBOX, box);
+    async putMedia(id, blob, { gameId, teamId, ext = "jpg" } = {}) {
+      await idb("readwrite", (s) => s.put(blob, id));
+      const box = outbox(); box.media.push({ id, gameId, teamId, ext }); writeJSON(OUTBOX, box);
       flush();
     },
-    async getMedia(id, { gameId, teamId } = {}) {
+    async getMedia(id, { gameId, teamId, ext } = {}) {
       const local = await idb("readonly", (s) => s.get(id)).catch(() => null);
-      if (local) return local;
+      if (local) return mediaUrl(id, local);
       if (!gameId || !teamId) return null;
-      const { data } = await sb.storage.from("photos").createSignedUrl(`${gameId}/${teamId}/${id}.jpg`, 3600);
+      const { data } = await sb.storage.from("photos").createSignedUrl(mediaPath({ id, gameId, teamId, ext }), 3600);
       return data?.signedUrl || null;
+    },
+    // Fichier complet (pour « Enregistrer » / « Partager » depuis l'album).
+    async getMediaBlob(id, opts = {}) {
+      const local = await idb("readonly", (s) => s.get(id)).catch(() => null);
+      if (local) return toBlob(local);
+      const { data, error } = await sb.storage.from("photos").download(mediaPath({ id, ...opts }));
+      if (error) throw new Error("Média introuvable");
+      return data;
     },
 
     // « Sécuriser mes parcours » : rattache un e-mail à la session anonyme.

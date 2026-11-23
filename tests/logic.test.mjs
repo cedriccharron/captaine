@@ -52,3 +52,29 @@ import { mergedProgress, teamPlay, teamScore, ranking, makeCode, pendingCount } 
   assert.match(makeCode(), /^[A-HJ-KM-NP-Z2-9]{6}$/);
 }
 console.log("Tests jalon 2 OK");
+
+// Jalon 3 : mini-jeux
+import { createShakeDetector, createLevelDetector, createShoutDetector, rms } from "../js/minigames.js";
+{
+  const sh = createShakeDetector({ threshold: 14, minGapMs: 180 });
+  let t = 0;
+  for (let i = 0; i < 10; i++) { sh.push(20, t); sh.push(25, t + 20); sh.push(2, t + 60); t += 250; } // 10 secousses nettes
+  assert.equal(sh.count, 10);
+  const sh2 = createShakeDetector({ threshold: 14, minGapMs: 180 });
+  sh2.push(20, 0); sh2.push(3, 50); sh2.push(20, 100); // trop rapproché
+  assert.equal(sh2.count, 1);
+  const lv = createLevelDetector({ maxTilt: 6, holdMs: 1000 });
+  assert.equal(lv.push(1, 1, 0).done, false);
+  assert.equal(lv.push(2, -2, 600).held, 600);
+  assert.equal(lv.push(10, 0, 700).held, 0, "trop penché : remise à zéro");
+  lv.push(0, 0, 800); assert.equal(lv.push(0, 0, 1900).done, true);
+  const cr = createShoutDetector({ threshold: 0.2, holdMs: 500 });
+  let r; for (let i = 0; i <= 10; i++) r = cr.push(i % 2 ? 0.5 : 0.3, i * 60);
+  assert.ok(r.done);
+  assert.ok(Math.abs(rms([0.5, -0.5, 0.5, -0.5]) - 0.5) < 1e-9);
+}
+import { validateStep as vs3, needsJudge } from "../js/game.js";
+assert.ok(needsJudge({ challenge: "video" }));
+assert.deepEqual(vs3({ title: "x", lat: 1, lng: 1, nav: "boussole", challenge: "jeu", game: { kind: "secousse", target: 30 } }), []);
+assert.equal(vs3({ title: "x", lat: 1, lng: 1, nav: "boussole", challenge: "jeu" }).length, 1);
+console.log("Tests jalon 3 OK");
