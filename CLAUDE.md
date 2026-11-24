@@ -14,6 +14,7 @@ Jeu de piste GPS par équipes pour familles et amis. Propriétaire : Cédric. R�
 - Capitaine = premier téléphone qui prend une équipe libre ; « Passer le relais » par QR code.
 - Le téléphone du capitaine fait foi (local d'abord) ; l'organisateur classe photos/vidéos (`judgments` : `{verdict, rank}` ou `"refused"`, ancien format `"done"` = tous les points).
 - Points selon la performance (`js/game.js`) : énigme = vitesse (100 % sous 1 min, puis baisse jusqu'à 30 % au temps de référence `refMin`, chrono depuis l'arrivée) ; mini-jeu = proportionnel à l'objectif, meilleur de 2 essais ; photo/vidéo = place attribuée par le juge (100/80/60/50 %). Les points d'une étape sont un maximum.
+- Talents (`js/talents.js`) : 7 familles (orientation pour le trajet, logique, observation, créativité, force, sang-froid, voix), nommées selon le thème. Talent d'une étape = `step.talent` ou défaut selon l'épreuve. Le capitaine saisit son équipage (prénoms + talents) ; il est rangé dans `team.progress._crew` (les clés `_…` ne sont pas des étapes) et l'app appelle le joueur à tour de rôle. Aucun effet sur les points.
 - Ordre des étapes circulaire et décalé par équipe ; étape finale commune.
 - Pas de réalité augmentée (Safari) ; l'écran du capitaine reste allumé (GPS web).
 

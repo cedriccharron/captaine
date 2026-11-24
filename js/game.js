@@ -176,6 +176,7 @@ export function validateStep(step) {
 export function mergedProgress(team) {
   const out = {};
   for (const [id, p] of Object.entries(team.progress || {})) {
+    if (id.startsWith("_")) continue; // données d'équipe (équipage), pas une étape
     const j = team.judgments?.[id];
     const verdict = verdictOf(j);
     out[id] = p.status === "pending" && verdict
@@ -214,4 +215,4 @@ export function makeCode(rand = Math.random) {
 }
 
 export const pendingCount = (team) =>
-  Object.entries(team.progress || {}).filter(([id, p]) => p.status === "pending" && !team.judgments?.[id]).length;
+  Object.entries(team.progress || {}).filter(([id, p]) => !id.startsWith("_") && p.status === "pending" && !team.judgments?.[id]).length;

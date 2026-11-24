@@ -144,3 +144,49 @@ console.log("Tests jalon 3 OK");
   assert.deepEqual([mp(tm).x.status, mp(tm).x.points, mp(tm).x.rank], ["done", 30, 3]);
   console.log("Tests points selon la performance OK");
 }
+
+// Talents et rôles
+{
+  const { TALENTS, FAMILIES, talent, defaultTalent, stepTalent, usedFamilies, autoAssign, whoFor, normalizeCrew } = await import("../js/talents.js");
+  const { mergedProgress: mp2, pendingCount: pc2 } = await import("../js/game.js");
+  for (const th of Object.keys(TALENTS)) for (const f of FAMILIES) assert.ok(TALENTS[th][f]?.name && TALENTS[th][f]?.call, `talent ${th}/${f}`);
+  assert.equal(talent("pirates", "logique").name, "Cartographe");
+  assert.equal(talent("inconnu", "logique").name, "Érudit", "thème inconnu : exploration");
+  assert.equal(defaultTalent({ challenge: "enigme" }), "logique");
+  assert.equal(defaultTalent({ challenge: "video" }), "creativite");
+  assert.equal(defaultTalent({ challenge: "jeu", game: { kind: "niveau" } }), "sangfroid");
+  assert.equal(defaultTalent({ challenge: "balise" }), "observation");
+  assert.equal(stepTalent({ challenge: "enigme", talent: "observation" }), "observation", "choix de l'organisateur");
+  assert.equal(stepTalent({ challenge: "enigme", talent: "orientation" }), "logique", "l'orientation est réservée au trajet");
+  const steps = [
+    { id: "a", challenge: "enigme" }, { id: "b", challenge: "photo" }, { id: "c", challenge: "enigme" },
+    { id: "d", challenge: "jeu", game: { kind: "secousse" } },
+  ];
+  assert.deepEqual(usedFamilies(steps), ["orientation", "logique", "creativite", "force"]);
+  // Répartition : moins de joueurs que de talents, puis plus
+  const fams = usedFamilies(steps);
+  assert.deepEqual(autoAssign(2, fams), { orientation: [0], logique: [1], creativite: [0], force: [1] });
+  assert.deepEqual(autoAssign(6, fams), { orientation: [0, 4], logique: [1, 5], creativite: [2], force: [3] });
+  assert.deepEqual(autoAssign(0, fams).logique, []);
+  // Appels à tour de rôle
+  const crew = { members: ["Tom", "Léa", "Max"], assign: { orientation: [0, 1], logique: [1, 2], creativite: [0], force: [2] } };
+  const order = ["c", "d", "a", "b"];
+  assert.equal(whoFor(crew, order, steps, "c", "logique"), "Léa", "1re énigme");
+  assert.equal(whoFor(crew, order, steps, "a", "logique"), "Max", "2e énigme : au suivant");
+  assert.equal(whoFor(crew, order, steps, "c", "orientation"), "Tom");
+  assert.equal(whoFor(crew, order, steps, "d", "orientation"), "Léa");
+  assert.equal(whoFor(crew, order, steps, "a", "orientation"), "Tom");
+  assert.equal(whoFor(null, order, steps, "a", "logique"), null, "pas d'équipage");
+  // Saisie nettoyée : prénom vide retiré, indices renumérotés, talent sans joueur complété
+  const nc = normalizeCrew(["Tom", " ", "Max"], { logique: [2], force: [1] }, ["logique", "force"]);
+  assert.deepEqual(nc.members, ["Tom", "Max"]);
+  assert.deepEqual(nc.assign.logique, [1, 0], "Tom, sans talent valide, en reçoit un");
+  assert.deepEqual(nc.assign.force, [1], "talent sans joueur valide : répartition automatique");
+  const nc2 = normalizeCrew(["Tom", "Léa", "Max"], { logique: [0], force: [0, 1] }, ["logique", "force"]);
+  assert.deepEqual(nc2.assign.logique, [0, 2], "Max sans talent rejoint le talent le moins fourni");
+  // L'équipage rangé dans la progression ne compte pas comme une étape
+  const tm = { progress: { _crew: crew, x: { status: "pending", points: 10 } }, judgments: {} };
+  assert.equal(mp2(tm)._crew, undefined);
+  assert.equal(pc2(tm), 1);
+  console.log("Tests talents OK");
+}

@@ -14,8 +14,9 @@ import {
   REF_MINUTES, DEFAULT_REF_MIN, SLOW_SHARE, enigmaStart, GAME_TRIES, gamePoints, registerTry, RANK_SHARES, rankShare, verdictOf,
 } from "./game.js";
 import { THEMES, theme, applyTheme, TEAM_COLORS } from "./themes.js";
+import { FAMILIES, FAMILY_ICON, FAMILY_LABEL, talent, defaultTalent, stepTalent, usedFamilies, autoAssign, whoFor, normalizeCrew } from "./talents.js";
 
-const VERSION = "0.5.0 (jalon 3)";
+const VERSION = "0.6.0 (jalon 3)";
 const $ = (s, root = document) => root.querySelector(s);
 const POS_EVERY_MS = 30000;      // envoi de la position du capitaine
 const STALE_MS = 2 * 60000;      // au-delà : « hors réseau »
@@ -28,6 +29,7 @@ const S = {
   flash: null,      // message de réussite affiché au-dessus de l'étape suivante
   media: null,      // photo ou vidéo prise, pas encore envoyée
   minigame: null,   // mini-jeu en cours {stepId, stop, failed}
+  crew: null,       // équipage en cours de saisie {teamId, names, assign}
   album: null,      // album ouvert {gameId, index}
   join: null,       // résultat de la recherche par code
   relay: null,      // code « Passer le relais » affiché
@@ -371,6 +373,10 @@ function viewStepForm(cid, sid) {
           <p class="small muted">Points proportionnels au résultat : l'objectif atteint donne tous les points, la moitié de l'objectif la moitié des points. ${GAME_TRIES} essais, le meilleur compte.</p>
           ${s.game.kind === "cri" ? `<p class="small muted">Le capitaine devra autoriser le micro. Rien n'est enregistré : seul le volume est mesuré.</p>` : ""}` : `<p class="small muted">Choisis un mini-jeu.</p>`}`
       : `<label class="field"><span>Message à l'arrivée (facultatif)</span><textarea data-f="question" rows="2" maxlength="300">${esc(s.question)}</textarea></label>`}
+      <label class="field"><span>Talent demandé</span><select data-f="talent">
+        <option value="" ${s.talent ? "" : "selected"}>Automatique : ${esc(talent(c.theme, defaultTalent(s)).name)}</option>
+        ${FAMILIES.filter((f) => f !== "orientation").map((f) => `<option value="${f}" ${s.talent === f ? "selected" : ""}>${esc(talent(c.theme, f).name)} (${FAMILY_LABEL[f].toLowerCase()})</option>`).join("")}
+      </select><span class="hint">L'app appellera le joueur de l'équipe qui a ce talent.</span></label>
       <label class="field"><span>${s.challenge === "balise" ? "Points" : "Points (maximum)"}</span><select data-f="points" data-num>${[20, 30, 50, 80, 100].map((p) => `<option value="${p}" ${s.points === p ? "selected" : ""}>${p} points</option>`).join("")}</select></label>
       <label class="check"><input type="checkbox" data-f="final" ${s.final ? "checked" : ""}> ${cap(w.step)} finale (toujours jouée en dernier)</label>
     </section>
@@ -569,7 +575,8 @@ function viewPlayOrWait(g) {
         <p class="muted">L'organisateur donnera le départ dans un instant. Garde cet écran ouvert.</p>
         ${needCompass ? `<p><button class="btn primary" data-action="compass-on">${icon("compass", 18)} Activer la boussole maintenant</button></p>` : ""}
         <p class="small muted">${esc(t.intro)}</p>
-      </div></div>`;
+      </div>
+      ${needsCrew(team) ? viewCrew(g, team) : crewSummary(g, team)}</div>`;
   }
   if (team.finished_at) {
     const rk = ranking(g);
@@ -634,14 +641,85 @@ function viewPlay(g, team) {
     ${g.settings.sim ? `<div class="simbar">${icon("walk", 16)} Simulation : la position est fictive.</div>` : `<div class="simbar warn" id="gps-status" hidden></div>`}
     ${pending ? `<div class="simbar">${icon("wifiOff", 16)} ${plural(pending, "envoi en attente de réseau", "envois en attente de réseau")}</div>` : ""}
     ${flash ? `<div class="flash">${icon("check", 18)} <span><strong>${esc(flash.text)}</strong>${flash.msg ? `<br><span class="small">${esc(flash.msg)}</span>` : ""}</span></div>` : ""}
+    ${needsCrew(team) ? viewCrew(g, team) : `
+    ${here ? "" : talentCall(g, team, s, "orientation")}
     ${here ? "" : viewNavigator(g, s)}
-    ${here ? viewChallenge(g, team, s, p) : ""}
+    ${here ? talentCall(g, team, s, stepTalent(s)) : ""}
+    ${here ? viewChallenge(g, team, s, p) : ""}`}
     <p class="center small muted pad">${esc(g.course.name)} · ${plural(Object.values(team.progress).filter((x) => x.status === "done" || x.status === "pending").length, `${w.step} réussie`, `${w.steps} réussies`)}</p>
     <div class="row-gap small">
+      <button class="btn small ghost" data-action="crew-edit" data-g="${g.id}">${icon("users", 16)} Équipage</button>
       <a class="btn small ghost" href="#/g/${g.id}/relay">${icon("share", 16)} Passer le relais</a>
       <button class="btn small ghost" data-action="skip-step" data-g="${g.id}">Passer cette ${w.step}</button>
     </div>
   </div>`;
+}
+
+// ---------- Talents et équipage ------------------------------------------------------------
+// L'équipage est rangé dans la progression de l'équipe (clé _crew) : il suit le relais et le hors-ligne.
+const crewOf = (team) => team.progress?._crew || null;
+const needsCrew = (team) => S.crew?.teamId === team.id || !crewOf(team);
+
+// Bandeau « Au tour de Léa ! » (ou « Qui est votre … ? » sans équipage).
+function talentCall(g, team, s, family) {
+  const tl = talent(g.course.theme, family);
+  const who = whoFor(crewOf(team), teamPlay(g, team).order, g.course.steps, s.id, family);
+  return `<div class="talent-call">${icon(FAMILY_ICON[family], 22)}
+    <span class="grow"><span class="kicker">Talent · ${esc(tl.name)}</span><br>
+    ${who ? `<strong>Au tour de ${esc(who)} !</strong> <span class="small">${esc(cap(tl.call))}.</span>` : `<strong>Qui ${esc(tl.call)} ?</strong>`}</span></div>`;
+}
+
+function crewDraft(g, team) {
+  if (S.crew?.teamId !== team.id) {
+    const fams = usedFamilies(g.course.steps);
+    const saved = crewOf(team);
+    const names = saved?.members?.length ? [...saved.members] : [team.captain_name || "", ""];
+    S.crew = { teamId: team.id, gameId: g.id, names, assign: saved?.members?.length ? structuredClone(saved.assign) : autoAssign(names.length, fams) };
+  }
+  return S.crew;
+}
+
+function viewCrew(g, team) {
+  const t = theme(g.course.theme);
+  const d = crewDraft(g, team);
+  return `<section class="panel crew">
+    <h2>${icon("users", 20)} Votre ${t.words.team.toLowerCase()}</h2>
+    <p class="small muted">Notez les prénoms des joueurs : à chaque épreuve, l'app dira qui s'y colle. Chacun aura son moment !</p>
+    <div class="crew-names">${d.names.map((n, i) => `<div class="crew-name">
+      <input data-crew-name="${i}" value="${esc(n)}" maxlength="30" placeholder="Prénom ${i + 1}" aria-label="Prénom du joueur ${i + 1}" autocapitalize="words">
+      ${d.names.length > 1 ? `<button type="button" class="icon-btn" data-action="crew-del" data-i="${i}" aria-label="Retirer ce joueur">${icon("x", 18)}</button>` : ""}</div>`).join("")}</div>
+    ${d.names.length < 12 ? `<button type="button" class="btn small ghost" data-action="crew-add">${icon("plus", 16)} Ajouter un joueur</button>` : ""}
+    <div id="crew-talents">${crewTalents(g)}</div>
+    <div class="row-actions">
+      <button type="button" class="btn ghost" data-action="crew-skip" data-g="${g.id}">${crewOf(team) ? "Annuler" : "Plus tard"}</button>
+      <button type="button" class="btn primary" data-action="crew-save" data-g="${g.id}">C'est parti !</button>
+    </div>
+  </section>`;
+}
+
+// Partie « talents » de l'équipage, redessinée seule quand un prénom change (les boutons voisins restent cliquables).
+function crewTalents(g) {
+  const d = S.crew;
+  const fams = usedFamilies(g.course.steps);
+  const named = d.names.map((n, i) => [n.trim(), i]).filter(([n]) => n);
+  if (!named.length) return "";
+  return `<h3>Les talents</h3>
+      <p class="small muted">Touchez un prénom pour lui donner ou lui retirer un talent. À plusieurs sur un talent, ils passent à tour de rôle.</p>
+      ${fams.map((f) => { const tl = talent(g.course.theme, f); return `<div class="crew-talent">
+        <span class="crew-t">${icon(FAMILY_ICON[f], 20)}<span><strong>${esc(tl.name)}</strong><br><span class="small muted">${esc(cap(tl.call))}</span></span></span>
+        <div class="chips">${named.map(([n, i]) => { const on = d.assign[f]?.includes(i); return `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-action="crew-toggle" data-f="${f}" data-i="${i}">${esc(n)}</button>`; }).join("")}</div>
+      </div>`; }).join("")}
+      <button type="button" class="btn small ghost" data-action="crew-shuffle">Répartir autrement</button>`;
+}
+
+function crewSummary(g, team) {
+  const crew = crewOf(team);
+  if (!crew?.members?.length) return "";
+  const fams = usedFamilies(g.course.steps);
+  return `<section class="panel crew">
+    <div class="panel-head"><h2>${icon("users", 20)} ${esc(team.name)}</h2><button class="btn small ghost" data-action="crew-edit" data-g="${g.id}">Modifier</button></div>
+    <ul class="crew-list">${crew.members.map((n, i) => `<li><strong>${esc(n)}</strong> <span class="small muted">${fams.filter((f) => crew.assign[f]?.includes(i)).map((f) => esc(talent(g.course.theme, f).name)).join(", ") || "—"}</span></li>`).join("")}</ul>
+  </section>`;
 }
 
 function arrived(team, s) { return !!team.progress[s.id]?.arrivedAt; }
@@ -1386,6 +1464,47 @@ const actions = {
     toast(`Préparation de ${plural(items.length, "fichier", "fichiers")}…`);
     await shareMedia(g, items);
   },
+  "crew-add"() { S.crew.names.push(""); render(); $(`[data-crew-name="${S.crew.names.length - 1}"]`)?.focus(); },
+  "crew-del"(el) {
+    const i = Number(el.dataset.i);
+    S.crew.names.splice(i, 1);
+    for (const f of Object.keys(S.crew.assign)) S.crew.assign[f] = S.crew.assign[f].filter((m) => m !== i).map((m) => (m > i ? m - 1 : m));
+    render();
+  },
+  "crew-toggle"(el) {
+    const f = el.dataset.f, i = Number(el.dataset.i);
+    const ids = (S.crew.assign[f] ||= []);
+    if (ids.includes(i)) S.crew.assign[f] = ids.filter((m) => m !== i);
+    else ids.push(i);
+    render();
+  },
+  "crew-shuffle"() {
+    const team = S.data.games.flatMap((g) => g.teams.map((x) => [g, x])).find(([, x]) => x.id === S.crew.teamId);
+    const idx = S.crew.names.map((n, i) => [n.trim(), i]).filter(([n]) => n).map(([, i]) => i);
+    for (let k = idx.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [idx[k], idx[j]] = [idx[j], idx[k]]; }
+    const base = autoAssign(idx.length, usedFamilies(team[0].course.steps));
+    S.crew.assign = Object.fromEntries(Object.entries(base).map(([f, ids]) => [f, ids.map((m) => idx[m])]));
+    render();
+  },
+  "crew-edit"(el) { const g = gameById(el.dataset.g); S.crew = null; crewDraft(g, myTeam(g)); render(); window.scrollTo(0, 0); },
+  async "crew-skip"(el) {
+    const g = gameById(el.dataset.g);
+    const team = myTeam(g);
+    S.crew = null;
+    if (!crewOf(team)) { team.progress._crew = { members: [], assign: {} }; await pushTeam(g, team); }
+    render();
+  },
+  async "crew-save"(el) {
+    const g = gameById(el.dataset.g);
+    const team = myTeam(g);
+    const crew = normalizeCrew(S.crew.names, S.crew.assign, usedFamilies(g.course.steps));
+    if (!crew.members.length) { toast("Ajoute au moins un prénom, ou choisis « Plus tard »", "error"); return; }
+    team.progress._crew = crew;
+    S.crew = null;
+    await pushTeam(g, team);
+    toast(`${plural(crew.members.length, "joueur", "joueurs")} dans ${la(theme(g.course.theme).words.team.toLowerCase())}`);
+    render();
+  },
   "game-stop"() { if (S.minigame?.stop?.end) S.minigame.stop.end(); else { S.minigame = null; render(); } },
   async "game-keep"(el) {
     const g = gameById(el.dataset.g);
@@ -1502,6 +1621,7 @@ document.addEventListener("input", (e) => {
     else S.draft.step[el.dataset.f] = el.hasAttribute("data-num") ? Number(el.value) : el.value;
   }
   if (el.dataset.teamName && S.startForm) S.startForm.teams[Number(el.dataset.teamName)].name = el.value;
+  if (el.dataset.crewName != null && S.crew) S.crew.names[Number(el.dataset.crewName)] = el.value;
 });
 
 document.addEventListener("change", async (e) => {
@@ -1530,6 +1650,20 @@ document.addEventListener("change", async (e) => {
       S.media = { stepId: el.dataset.mediaInput, ...m };
       render();
     } catch (err) { toast(err.message, "error"); }
+    return;
+  }
+  if (el.dataset.crewName != null && S.crew) {
+    const i = Number(el.dataset.crewName);
+    S.crew.names[i] = el.value;
+    const box = $("#crew-talents"), g = gameById(S.crew.gameId);
+    // Un joueur qui vient d'être nommé reçoit tout de suite le talent le moins fourni.
+    const fams = g ? usedFamilies(g.course.steps) : [];
+    if (el.value.trim() && fams.length && !fams.some((f) => S.crew.assign[f]?.includes(i))) {
+      const count = (f) => (S.crew.assign[f] || []).filter((m) => S.crew.names[m]?.trim()).length;
+      const f = fams.reduce((a, b) => (count(b) < count(a) ? b : a));
+      (S.crew.assign[f] ||= []).push(i);
+    }
+    if (box && g) box.innerHTML = crewTalents(g);
     return;
   }
   if (el.hasAttribute("data-game-target") && S.draft?.step.game) { S.draft.step.game.target = Number(el.value); render(); }
