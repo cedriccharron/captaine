@@ -12,7 +12,8 @@ Jeu de piste GPS par équipes pour familles et amis. Propriétaire : Cédric. R�
 ## Décisions prises (voir le cahier des charges)
 - Joueurs sans compte (session anonyme Supabase). Seuls les **administrateurs** créent parcours et parties : compte e-mail + mot de passe créé dans Supabase, e-mail listé dans `public.admins`, vérifié par la base (`is_admin()` dans les politiques RLS). Connexion dans l'onglet « Plus » ; `adopt_content` récupère les données de la session anonyme du téléphone. En démo, le téléphone principal est admin, les téléphones simulés non.
 - Capitaine = premier téléphone qui prend une équipe libre ; « Passer le relais » par QR code.
-- Le téléphone du capitaine fait foi (local d'abord) ; l'organisateur valide photos/vidéos (`judgments`).
+- Le téléphone du capitaine fait foi (local d'abord) ; l'organisateur classe photos/vidéos (`judgments` : `{verdict, rank}` ou `"refused"`, ancien format `"done"` = tous les points).
+- Points selon la performance (`js/game.js`) : énigme = vitesse (100 % sous 1 min, puis baisse jusqu'à 30 % au temps de référence `refMin`, chrono depuis l'arrivée) ; mini-jeu = proportionnel à l'objectif, meilleur de 2 essais ; photo/vidéo = place attribuée par le juge (100/80/60/50 %). Les points d'une étape sont un maximum.
 - Ordre des étapes circulaire et décalé par équipe ; étape finale commune.
 - Pas de réalité augmentée (Safari) ; l'écran du capitaine reste allumé (GPS web).
 

@@ -11,10 +11,11 @@ import {
 import {
   CHALLENGES, CHALLENGE_LONG, needsJudge, NAVS, LEVELS, HINT_COST, parseAnswers, stepPoints, currentStepId,
   lockRemaining, registerAnswer, validateStep, teamPlay, teamScore, ranking, pendingCount,
+  REF_MINUTES, DEFAULT_REF_MIN, SLOW_SHARE, enigmaStart, GAME_TRIES, gamePoints, registerTry, RANK_SHARES, rankShare, verdictOf,
 } from "./game.js";
 import { THEMES, theme, applyTheme, TEAM_COLORS } from "./themes.js";
 
-const VERSION = "0.4.0 (jalon 3)";
+const VERSION = "0.5.0 (jalon 3)";
 const $ = (s, root = document) => root.querySelector(s);
 const POS_EVERY_MS = 30000;      // envoi de la position du capitaine
 const STALE_MS = 2 * 60000;      // au-delà : « hors réseau »
@@ -356,18 +357,21 @@ function viewStepForm(cid, sid) {
         <label class="field"><span>Réponses acceptées (une par ligne)</span><textarea data-f="answersText" rows="2" maxlength="300" placeholder="1874">${esc(S.draft.answersText)}</textarea>
           <span class="hint">Majuscules, accents et espaces sont ignorés.</span></label>
         <label class="field"><span>Indice d'énigme (coûte ${HINT_COST} pts)</span><input data-f="hint" value="${esc(s.hint)}" maxlength="200"></label>
+        <label class="field"><span>Temps de référence</span><select data-f="refMin" data-num>${REF_MINUTES.map((m) => `<option value="${m}" ${(s.refMin || DEFAULT_REF_MIN) === m ? "selected" : ""}>${m} minutes</option>`).join("")}</select>
+          <span class="hint">Tous les points en moins d'une minute, puis de moins en moins : ${Math.round(SLOW_SHARE * 100)} % des points à partir de ce temps. Le chrono démarre à l'arrivée sur place.</span></label>
         <label class="check"><input type="checkbox" data-f="needOnSite" ${s.needOnSite ? "checked" : ""}> Réponse acceptée seulement sur place</label>`
       : needsJudge(s) ? `
         <label class="field"><span>Consigne du défi ${s.challenge === "video" ? "vidéo" : "photo"}</span><textarea data-f="question" rows="3" maxlength="400" placeholder="${s.challenge === "video" ? "Ex. Chantez le refrain de votre chanson d'équipe devant la fontaine" : "Ex. Une pyramide humaine devant la roue du moulin"}">${esc(s.question)}</textarea></label>
-        <p class="small muted">Les points restent « en attente » jusqu'à ta validation.${s.challenge === "video" ? " Vidéo courte conseillée (15 secondes) : au-delà de 48 Mo, elle est refusée." : ""}</p>`
+        <p class="small muted">Tu classeras les ${s.challenge === "video" ? "vidéos" : "photos"} reçues : ${RANK_SHARES.map((r, i) => `${i + 1}<sup>${i ? "e" : "re"}</sup> ${Math.round(r * 100)} %`).join(", ")} des points, et ${Math.round(RANK_SHARES.at(-1) * 100)} % pour les suivantes.${s.challenge === "video" ? " Vidéo courte conseillée (15 secondes) : au-delà de 48 Mo, elle est refusée." : ""}</p>`
       : s.challenge === "jeu" ? `
         <div class="seg wrap">${Object.entries(GAMES).map(([k, gm]) => `<button type="button" class="${s.game?.kind === k ? "on" : ""}" data-action="draft-game" data-v="${k}" aria-pressed="${s.game?.kind === k}">${gm.name}</button>`).join("")}</div>
         ${s.game?.kind ? `<p class="small muted">${esc(GAMES[s.game.kind].desc)}.</p>
           <label class="field"><span>Objectif</span><select data-game-target>${GAMES[s.game.kind].options.map((n) => `<option value="${n}" ${s.game.target === n ? "selected" : ""}>${n} ${GAMES[s.game.kind].unit}</option>`).join("")}</select></label>
           <label class="field"><span>Consigne (facultatif)</span><textarea data-f="question" rows="2" maxlength="300" placeholder="${esc(GAMES[s.game.kind].hint(s.game.target))}">${esc(s.question)}</textarea></label>
+          <p class="small muted">Points proportionnels au résultat : l'objectif atteint donne tous les points, la moitié de l'objectif la moitié des points. ${GAME_TRIES} essais, le meilleur compte.</p>
           ${s.game.kind === "cri" ? `<p class="small muted">Le capitaine devra autoriser le micro. Rien n'est enregistré : seul le volume est mesuré.</p>` : ""}` : `<p class="small muted">Choisis un mini-jeu.</p>`}`
       : `<label class="field"><span>Message à l'arrivée (facultatif)</span><textarea data-f="question" rows="2" maxlength="300">${esc(s.question)}</textarea></label>`}
-      <label class="field"><span>Points</span><select data-f="points" data-num>${[20, 30, 50, 80, 100].map((p) => `<option value="${p}" ${s.points === p ? "selected" : ""}>${p} points</option>`).join("")}</select></label>
+      <label class="field"><span>${s.challenge === "balise" ? "Points" : "Points (maximum)"}</span><select data-f="points" data-num>${[20, 30, 50, 80, 100].map((p) => `<option value="${p}" ${s.points === p ? "selected" : ""}>${p} points</option>`).join("")}</select></label>
       <label class="check"><input type="checkbox" data-f="final" ${s.final ? "checked" : ""}> ${cap(w.step)} finale (toujours jouée en dernier)</label>
     </section>
     <div class="form-actions sticky"><a class="btn ghost" href="#/c/${cid}">Annuler</a><button class="btn primary" data-action="draft-save">Enregistrer</button></div>`;
@@ -675,34 +679,39 @@ function viewChallenge(g, team, s, p) {
     const m = S.media?.stepId === s.id ? S.media : null;
     const input = `<input type="file" accept="${video ? "video/*" : "image/*"}" capture="environment" data-media-input="${s.id}" hidden>`;
     return `<section class="panel challenge">
-      <span class="kicker">Défi ${video ? "vidéo" : "photo"} · ${s.points} pts</span>
+      <span class="kicker">Défi ${video ? "vidéo" : "photo"} · jusqu'à ${s.points} pts</span>
       <h2 class="q">${esc(levelQuestion(team, s))}</h2>
       ${m
         ? `${m.kind === "video" ? `<video class="photo-preview" src="${m.url}" controls playsinline></video>` : `<img class="photo-preview" src="${m.url}" alt="Photo prise pour le défi">`}
            <div class="row-actions"><label class="btn ghost">${icon(video ? "video" : "camera", 18)} Refaire${input}</label>
            <button class="btn primary" data-action="media-send" data-g="${g.id}">Envoyer</button></div>`
         : `<label class="btn primary block big">${icon(video ? "video" : "camera", 20)} ${video ? "Filmer" : "Prendre la photo"}${input}</label>`}
-      <p class="small muted">L'organisateur validera ${video ? "la vidéo" : "la photo"}. Vous pouvez continuer sans attendre.${video ? " Restez court : 15 secondes environ." : ""}</p>
+      <p class="small muted">L'organisateur classera ${video ? "les vidéos" : "les photos"} de toutes les équipes : la meilleure gagne tous les points. Vous pouvez continuer sans attendre.${video ? " Restez court : 15 secondes environ." : ""}</p>
     </section>`;
   }
   if (s.challenge === "jeu") {
     const gm = GAMES[s.game.kind];
     const run = S.minigame?.stepId === s.id ? S.minigame : null;
+    const tries = p.tries || 0;
+    const fmtv = (v) => s.game.kind === "secousse" ? plural(v, "secousse", "secousses") : `${fmtNum(v, 1)} s`;
     return `<section class="panel challenge">
-      <span class="kicker">Mini-jeu · ${gm.name} · ${s.points} pts</span>
+      <span class="kicker">Mini-jeu · ${gm.name} · jusqu'à ${s.points} pts</span>
       <h2 class="q">${esc(s.question?.trim() || gm.hint(s.game.target))}</h2>
       ${s.game.kind === "niveau" ? `<div class="bubble-level" aria-hidden="true"><span class="bl-ring"></span><span class="bl-bubble" id="mg-bubble"></span></div>` : ""}
       <div class="mg-meter" role="progressbar" aria-label="Progression" aria-valuemin="0" aria-valuemax="100" id="mg-meter"><span id="mg-bar"></span></div>
-      <p class="center mg-val" id="mg-val">${run?.failed ? "Raté ! On réessaie ?" : run ? "C'est parti !" : `Objectif : ${s.game.target} ${gm.unit}`}</p>
-      ${run && !run.failed
-        ? `<button class="btn ghost block" data-action="game-stop">Arrêter</button>`
-        : `<button class="btn primary block big" data-action="game-start" data-g="${g.id}" data-s="${s.id}">${icon("play", 20)} ${run?.failed ? "Réessayer" : "Commencer"}</button>`}
-      ${g.settings.sim ? `<button class="btn ghost block" data-action="game-sim" data-g="${g.id}" data-s="${s.id}">Réussir (simulation)</button>` : ""}
+      <p class="center mg-val" id="mg-val">${run ? "C'est parti !" : tries ? `Essai ${tries} : ${fmtv(p.best || 0)} → ${gamePoints(s, p.best)} pts` : `Objectif : ${fmtv(s.game.target)} = ${s.points} pts`}</p>
+      <p class="small muted center">${tries ? `Encore ${plural(GAME_TRIES - tries, "essai", "essais")} : le meilleur résultat compte.` : `Les points suivent le résultat. ${GAME_TRIES} essais, le meilleur compte.`}</p>
+      ${run
+        ? `<button class="btn ghost block" data-action="game-stop">Arrêter et compter l'essai</button>`
+        : `<button class="btn primary block big" data-action="game-start" data-g="${g.id}" data-s="${s.id}">${icon("play", 20)} ${tries ? "Dernier essai" : "Commencer"}</button>
+           ${tries ? `<button class="btn ghost block" data-action="game-keep" data-g="${g.id}" data-s="${s.id}">Garder ${gamePoints(s, p.best)} pts</button>` : ""}`}
+      ${g.settings.sim && !run ? `<div class="sim-actions"><button class="btn ghost" data-action="game-sim" data-v="1" data-g="${g.id}" data-s="${s.id}">Essai réussi (simulation)</button>
+        <button class="btn ghost" data-action="game-sim" data-v="0.5" data-g="${g.id}" data-s="${s.id}">Moitié (simulation)</button></div>` : ""}
     </section>`;
   }
   const lock = lockRemaining(p);
   return `<section class="panel challenge">
-    <span class="kicker">Énigme · ${stepPoints(s, p.hints)} pts${team.level === "enfant" && s.kidQuestion ? " · version enfant" : ""}</span>
+    <span class="kicker">Énigme · jusqu'à ${stepPoints(s, p.hints)} pts${team.level === "enfant" && s.kidQuestion ? " · version enfant" : ""}</span>
     <h2 class="q">${esc(levelQuestion(team, s))}</h2>
     ${p.hints ? `<div class="clue">${icon("bulb", 18)}<span>${esc(s.hint)}</span></div>` : ""}
     <form id="answer-form" data-g="${g.id}" data-s="${s.id}" autocomplete="off">
@@ -713,6 +722,7 @@ function viewChallenge(g, team, s, p) {
         <button class="btn primary" type="submit" ${lock ? "disabled" : ""}>Valider</button>
       </div>
     </form>
+    <p class="small muted">Plus vous répondez vite, plus vous gagnez de points.</p>
     ${!arrived(team, s) && s.needOnSite === false ? `<p class="small muted">Cette ${W(g.course.theme).step} peut se résoudre à distance.</p>` : ""}
   </section>`;
 }
@@ -907,15 +917,7 @@ function viewLive(g) {
   return `${top({ title: esc(g.course.name), sub: `En cours · ${fmtDuration(elapsed)}${left != null ? ` · reste ${fmtDuration(Math.max(0, left))}` : ""} · code ${esc(g.code)}`, back: "#/games",
       actions: `<button class="icon-btn" data-action="show-code" data-g="${g.id}" aria-label="Afficher le code">${icon("share")}</button>` })}
     ${liveMap(g)}
-    ${pendings ? `<section class="panel attention"><div class="panel-head"><h2>${icon("camera", 18)} À valider</h2><span class="small muted">${pendings}</span></div>
-      ${g.teams.flatMap((x) => Object.entries(x.progress).filter(([id, p]) => p.status === "pending" && !x.judgments?.[id]).map(([id, p]) => {
-        const s = stepOf(g, id);
-        return `<div class="validate">
-          ${mediaTag(g, x, p, "thumb big", `Défi ${s.title}`)}
-          <p><span class="team-chip" style="background:${x.color}">${esc(x.name)}</span> <strong>${esc(s.title)}</strong><br><span class="small muted">${esc(s.question)}</span></p>
-          <div class="row-actions"><button class="btn ghost" data-action="judge" data-v="refused" data-t="${x.id}" data-s="${id}">Refuser</button>
-          <button class="btn primary" data-action="judge" data-v="done" data-t="${x.id}" data-s="${id}">Valider +${p.points} pts</button></div></div>`;
-      })).join("")}</section>` : ""}
+    ${viewJudging(g, "Défis photo et vidéo")}
     <section class="panel">
       <h2>${t.words.teams}</h2>
       ${rk.map((r) => {
@@ -938,6 +940,36 @@ function viewLive(g) {
       <div class="inline-form"><input name="text" maxlength="300" placeholder="Ex. Cherchez du côté du moulin !" required><button class="btn primary" type="submit">Envoyer</button></div>
     </form>
     <div class="pad row-gap"><button class="btn ghost" data-action="finish-game" data-g="${g.id}">${icon("flag", 18)} Terminer la partie</button></div>`;
+}
+
+// Défis photo et vidéo : le juge classe les envois de chaque défi (1re place = tous les points…).
+const ordinal = (n) => (n === 1 ? "1re" : `${n}e`);
+function viewJudging(g, heading) {
+  const groups = g.course.steps.filter(needsJudge)
+    .map((s) => ({ s, items: g.teams.filter((x) => x.progress?.[s.id]?.status === "pending").map((x) => ({ team: x, p: x.progress[s.id], j: x.judgments?.[s.id] })) }))
+    .filter((gr) => gr.items.length);
+  if (!groups.length) return "";
+  const todo = groups.reduce((n, gr) => n + gr.items.filter((i) => !verdictOf(i.j)).length, 0);
+  return `<section class="panel ${todo ? "attention" : ""}">
+    <div class="panel-head"><h2>${icon("camera", 18)} ${heading}</h2><span class="small muted">${todo ? `${todo} à classer` : "tout est classé"}</span></div>
+    <p class="small muted">Classe les envois de chaque défi : ${RANK_SHARES.map((r, i) => `${ordinal(i + 1)} ${Math.round(r * 100)} %`).join(", ")} des points. Deux équipes peuvent partager une place.</p>
+    ${groups.map(({ s, items }) => `<details class="judge-group" ${items.some((i) => !verdictOf(i.j)) ? "open" : ""}>
+      <summary><strong>${esc(s.title)}</strong> <span class="small muted">· ${plural(items.length, "envoi", "envois")} · jusqu'à ${s.points} pts</span></summary>
+      <p class="small muted">${esc(s.question)}</p>
+      ${items.map(({ team: x, p, j }) => {
+        const v = verdictOf(j);
+        const rank = j && typeof j === "object" ? j.rank : null;
+        const state = v === "refused" ? "refusé · 0 pt" : rank ? `${ordinal(rank)} place · ${Math.round((p.points || 0) * rankShare(rank))} pts` : v === "done" ? `validé · ${p.points} pts` : "à classer";
+        return `<div class="validate">
+          ${mediaTag(g, x, p, "thumb big", `Défi ${s.title}`)}
+          <p><span class="team-chip" style="background:${x.color}">${esc(x.name)}</span> <span class="small ${v ? "" : "muted"}">${state}</span></p>
+          <div class="seg wrap rank-seg" role="group" aria-label="Place de ${esc(x.name)}">
+            ${items.map((_, i) => `<button type="button" class="${rank === i + 1 ? "on" : ""}" aria-pressed="${rank === i + 1}" data-action="judge" data-v="${i + 1}" data-t="${x.id}" data-s="${s.id}">${ordinal(i + 1)}</button>`).join("")}
+            <button type="button" class="${v === "refused" ? "on" : ""}" aria-pressed="${v === "refused"}" data-action="judge" data-v="refused" data-t="${x.id}" data-s="${s.id}">Refuser</button>
+          </div></div>`;
+      }).join("")}
+    </details>`).join("")}
+  </section>`;
 }
 
 // Carte sans fond (fonctionne hors ligne) : étapes numérotées et positions des équipes.
@@ -985,17 +1017,7 @@ function viewEnd(g) {
       <h1>${head}</h1>
       <span class="small">${fmtDuration(dur)} · ${plural(g.teams.length, t.words.team.toLowerCase(), t.words.teams.toLowerCase())}${pendings ? ` · ${plural(pendings, "défi à valider", "défis à valider")}` : ""}</span>
     </header>
-    ${owner && pendings ? `<section class="panel attention">
-      <h2>À valider avant le classement final</h2>
-      ${g.teams.flatMap((x) => Object.entries(x.progress).filter(([id, p]) => p.status === "pending" && !x.judgments?.[id]).map(([id, p]) => {
-        const s = stepOf(g, id);
-        return `<div class="validate">
-          ${mediaTag(g, x, p, "thumb big", `Défi ${s.title}`)}
-          <p><span class="team-chip" style="background:${x.color}">${esc(x.name)}</span> <strong>${esc(s.title)}</strong><br><span class="small muted">${esc(s.question)}</span></p>
-          <div class="row-actions"><button class="btn ghost" data-action="judge" data-v="refused" data-t="${x.id}" data-s="${id}">Refuser</button>
-          <button class="btn primary" data-action="judge" data-v="done" data-t="${x.id}" data-s="${id}">Valider +${p.points} pts</button></div></div>`;
-      })).join("")}
-    </section>` : ""}
+    ${owner ? viewJudging(g, pendings ? "À classer avant le classement final" : "Défis photo et vidéo") : ""}
     ${solo ? "" : `<section class="panel"><h2>Classement</h2>
       <ol class="ranking">${rk.map((r, i) => `<li class="${mine?.id === r.team.id ? "me" : ""}">
         <span class="rank">${i + 1}</span><span class="team-dot small-dot" style="background:${r.team.color}">${esc(initials(r.team.name))}</span>
@@ -1005,7 +1027,7 @@ function viewEnd(g) {
     ${(mine ? [mine] : owner ? g.teams : []).map((x) => { const play = teamPlay(g, x); return `<section class="panel">
       <h2>${solo ? "Le parcours" : `Parcours : ${esc(x.name)}`}</h2>
       <ol class="recap">${play.order.map((id) => { const s = stepOf(g, id); const p = play.progress[id] || {}; return `<li>
-        <span class="grow">${esc(s.title)}<br><span class="small muted">${CHALLENGES[s.challenge]}${p.hints ? " · indice" : ""}</span></span>
+        <span class="grow">${esc(s.title)}<br><span class="small muted">${CHALLENGES[s.challenge]}${p.hints ? " · indice" : ""}${p.rank ? ` · ${ordinal(p.rank)} place` : ""}${p.tries ? ` · ${plural(p.tries, "essai", "essais")}` : ""}</span></span>
         ${p.media && p.status !== "pending" ? mediaTag(g, x, p, "thumb", "") : ""}
         <span class="pts ${p.status || "todo"}">${p.status === "done" ? `+${p.points}` : p.status === "pending" ? "en attente" : p.status === "refused" ? "refusée" : p.status === "skipped" ? "passée" : "—"}</span></li>`; }).join("")}</ol>
     </section>`; }).join("")}
@@ -1285,8 +1307,9 @@ const actions = {
   },
   async judge(el) {
     const [g] = S.data.games.filter((x) => x.teams.some((t) => t.id === el.dataset.t));
-    await S.store.judge(el.dataset.t, el.dataset.s, el.dataset.v);
-    toast(el.dataset.v === "done" ? "Défi validé" : "Défi refusé");
+    const v = el.dataset.v;
+    await S.store.judge(el.dataset.t, el.dataset.s, v === "refused" ? "refused" : { verdict: "done", rank: Number(v) });
+    toast(v === "refused" ? "Envoi refusé" : `Classé ${ordinal(Number(v))}`);
     await refreshGame(g.id);
     render();
   },
@@ -1307,7 +1330,7 @@ const actions = {
     const g = gameById(el.dataset.g);
     const team = myTeam(g);
     const s = stepOf(g, el.dataset.s);
-    if (!(await confirmDialog(`Utiliser l'indice ? L'énigme rapportera ${stepPoints(s, 1)} pts au lieu de ${stepPoints(s, 0)}.`, "Voir l'indice", false))) return;
+    if (!(await confirmDialog(`Utiliser l'indice ? Il coûte ${HINT_COST} pts sur les points de l'énigme.`, "Voir l'indice", false))) return;
     prog(team, s.id).hints = 1;
     await pushTeam(g, team);
     render();
@@ -1324,7 +1347,7 @@ const actions = {
     const p = prog(team, s0.id);
     Object.assign(p, { status: "pending", points: stepPoints(s0, 0), media: mediaId, mediaType: m.kind, ext: m.ext, solvedAt: Date.now() });
     S.media = null;
-    S.flash = { text: `${m.kind === "video" ? "Vidéo" : "Photo"} envoyée : +${p.points} pts en attente de validation` };
+    S.flash = { text: `${m.kind === "video" ? "Vidéo" : "Photo"} envoyée : jusqu'à ${p.points} pts selon le classement` };
     await afterProgress(g, team);
   },
   async "game-start"(el) {
@@ -1334,7 +1357,7 @@ const actions = {
     try { stream = await requestSensors(s0.game.kind); }
     catch (e) { toast(e.message, "error"); return; }
     S.minigame?.stop?.();
-    S.minigame = { stepId: s0.id, failed: false, stop: null };
+    S.minigame = { stepId: s0.id, stop: null };
     render();
     const target = s0.game.target;
     S.minigame.stop = runGame(s0.game.kind, target, {
@@ -1347,7 +1370,7 @@ const actions = {
         const bub = $("#mg-bubble");
         if (bub && extra) bub.style.transform = `translate(${Math.max(-50, Math.min(50, extra.gamma * 3))}px, ${Math.max(-50, Math.min(50, extra.beta * 3))}px)`;
       },
-      onDone: (ok) => minigameDone(g.id, s0.id, ok),
+      onDone: ({ score }) => minigameDone(g.id, s0.id, score),
     });
   },
   "album-open"(el) { openAlbum(gameById(el.dataset.g), Number(el.dataset.i)); },
@@ -1363,8 +1386,21 @@ const actions = {
     toast(`Préparation de ${plural(items.length, "fichier", "fichiers")}…`);
     await shareMedia(g, items);
   },
-  "game-stop"() { S.minigame?.stop?.(); S.minigame = null; render(); },
-  async "game-sim"(el) { await minigameDone(el.dataset.g, el.dataset.s, true); },
+  "game-stop"() { if (S.minigame?.stop?.end) S.minigame.stop.end(); else { S.minigame = null; render(); } },
+  async "game-keep"(el) {
+    const g = gameById(el.dataset.g);
+    const team = myTeam(g);
+    const s0 = stepOf(g, el.dataset.s);
+    const p = prog(team, s0.id);
+    if (p.status === "done") return;
+    Object.assign(p, { status: "done", points: gamePoints(s0, p.best || 0), solvedAt: Date.now() });
+    S.flash = { text: `Mini-jeu : +${p.points} pts` };
+    await afterProgress(g, team);
+  },
+  async "game-sim"(el) {
+    const s0 = stepOf(gameById(el.dataset.g), el.dataset.s);
+    await minigameDone(el.dataset.g, el.dataset.s, s0.game.target * Number(el.dataset.v));
+  },
   "draft-game"(el) {
     const kind = el.dataset.v;
     S.draft.step.game = { kind, target: GAMES[kind].def };
@@ -1408,17 +1444,24 @@ const actions = {
   },
 };
 
-async function minigameDone(gid, sid, ok) {
+// Fin d'un essai de mini-jeu : score = secousses, ou secondes tenues.
+async function minigameDone(gid, sid, score) {
   const g = gameById(gid);
   const team = myTeam(g);
-  if (!ok) { S.minigame = { stepId: sid, failed: true }; navigator.vibrate?.([60, 40, 60]); render(); return; }
-  S.minigame = null;
   const s0 = stepOf(g, sid);
   const p = prog(team, sid);
-  Object.assign(p, { status: "done", points: stepPoints(s0, 0), solvedAt: Date.now() });
-  navigator.vibrate?.(200);
-  S.flash = { text: `Mini-jeu réussi ! +${p.points} pts` };
-  await afterProgress(g, team);
+  S.minigame = null;
+  if (p.status === "done") { render(); return; }
+  const res = registerTry(p, s0, score);
+  const reached = score >= s0.game.target;
+  navigator.vibrate?.(reached ? 200 : [60, 40, 60]);
+  if (res.done) {
+    S.flash = { text: `Mini-jeu : +${res.points} pts${reached ? " · objectif atteint !" : ""}` };
+    await afterProgress(g, team);
+  } else {
+    await pushTeam(g, team);
+    render();
+  }
 }
 
 async function moveStep(cid, i, dir) {
@@ -1535,7 +1578,7 @@ document.addEventListener("submit", async (e) => {
       const p = prog(team, s.id);
       const given = fd.get("answer");
       if (!String(given).trim()) return;
-      const res = registerAnswer(p, s, given);
+      const res = registerAnswer(p, s, given, Date.now(), enigmaStart(teamPlay(g, team), s.id, g.started_at));
       if (res.ok) {
         navigator.vibrate?.(150);
         S.flash = { text: `Bonne réponse ! +${p.points} pts` };

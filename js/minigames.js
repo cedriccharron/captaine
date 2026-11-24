@@ -75,10 +75,12 @@ export async function requestSensors(kind) {
   return null;
 }
 
-// Lance un mini-jeu. onTick({value, progress, extra}) à chaque mesure ; renvoie une fonction d'arrêt.
+// Lance un essai de mini-jeu. onTick({value, progress, extra}) à chaque mesure.
+// L'essai s'arrête à l'objectif atteint, au temps limite ou par .end() sur la fonction renvoyée ;
+// onDone({ ok, score }) reçoit alors le résultat (secousses, ou secondes tenues).
 export function runGame(kind, target, { stream, onTick, onDone }) {
-  let stopped = false;
-  const finish = (ok) => { if (!stopped) { stop(); onDone(ok); } };
+  let stopped = false, score = 0;
+  const finish = (ok) => { if (!stopped) { stop(); onDone({ ok, score: Math.min(score, target) }); } };
   let stop = () => {};
 
   if (kind === "secousse") {
@@ -89,6 +91,7 @@ export function runGame(kind, target, { stream, onTick, onDone }) {
       if (a) mag = Math.hypot(a.x, a.y, a.z);
       else { const g = e.accelerationIncludingGravity || {}; mag = Math.abs(Math.hypot(g.x || 0, g.y || 0, g.z || 0) - 9.81); }
       const n = det.push(mag, e.timeStamp || performance.now());
+      score = n;
       onTick({ value: n, progress: Math.min(1, n / target) });
       if (n >= target) finish(true);
     };
@@ -98,6 +101,7 @@ export function runGame(kind, target, { stream, onTick, onDone }) {
     const det = createLevelDetector({ holdMs: target * 1000 });
     const h = (e) => {
       const r = det.push(e.beta, e.gamma, performance.now());
+      score = det.best / 1000;
       onTick({ value: r.held / 1000, progress: r.progress, extra: { beta: e.beta || 0, gamma: e.gamma || 0 } });
       if (r.done) finish(true);
     };
@@ -116,6 +120,7 @@ export function runGame(kind, target, { stream, onTick, onDone }) {
       an.getFloatTimeDomainData(buf);
       const level = rms(buf);
       const r = det.push(level, performance.now());
+      score = r.total / 1000;
       onTick({ value: r.total / 1000, progress: r.progress, extra: { level, loud: r.loud } });
       if (r.done) finish(true); else raf = requestAnimationFrame(loop);
     };
@@ -124,5 +129,8 @@ export function runGame(kind, target, { stream, onTick, onDone }) {
   }
   // Le niveau à bulle laisse plus de temps : il faut surtout réussir à tenir.
   const timer = setTimeout(() => finish(false), kind === "niveau" ? 60000 : TIME_LIMIT_MS);
-  return () => stop();
+  // Appel simple : annule sans résultat (on quitte l'écran). .end() : termine l'essai et le compte.
+  const cancel = () => stop();
+  cancel.end = () => finish(false);
+  return cancel;
 }

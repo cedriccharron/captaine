@@ -97,3 +97,50 @@ console.log("Tests jalon 3 OK");
   assert.equal(parseLocation(""), null);
   console.log("Tests lieu saisi OK");
 }
+
+// Points selon la performance
+{
+  const { speedShare, enigmaPoints, enigmaStart, gamePoints, registerTry, rankShare, judgedPoints, mergedProgress: mp } = await import("../js/game.js");
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  // Énigme : 100 % sous 1 min, 30 % au temps de référence, linéaire entre les deux
+  assert.equal(speedShare(30000, 5), 1);
+  assert.equal(speedShare(60000, 5), 1);
+  assert.ok(near(speedShare(180000, 5), 1 - 0.7 * 0.5), "mi-chemin entre 1 et 5 min");
+  assert.equal(speedShare(300000, 5), 0.3);
+  assert.equal(speedShare(3600000, 5), 0.3, "jamais moins de 30 %");
+  const en = { points: 50, refMin: 5 };
+  assert.equal(enigmaPoints(en, 0, 45000), 50);
+  assert.equal(enigmaPoints(en, 0, 180000), 33);
+  assert.equal(enigmaPoints(en, 1, 180000), 13, "indice déduit après la vitesse");
+  assert.equal(enigmaPoints(en, 0, null), 50, "chrono inconnu : tous les points");
+  assert.equal(enigmaPoints({ points: 50 }, 0, 300000), 15, "temps de référence par défaut : 5 min");
+  // Début du chrono
+  const play = { order: ["a", "b", "c"], progress: { a: { status: "done", solvedAt: 5000 }, b: { arrivedAt: 9000 } } };
+  assert.equal(enigmaStart(play, "b", 1000), 9000, "arrivée sur place");
+  assert.equal(enigmaStart({ ...play, progress: { a: { solvedAt: 5000 } } }, "b", 1000), 5000, "fin de l'étape précédente");
+  assert.equal(enigmaStart({ order: ["a"], progress: {} }, "a", "1970-01-01T00:00:02.000Z"), 2000, "début de partie");
+  // registerAnswer avec chrono
+  const pr = { hints: 0 };
+  assert.equal(registerAnswer(pr, { ...st, refMin: 5 }, "1874", 200000, 20000).ok, true);
+  assert.equal(pr.points, Math.round(50 * speedShare(180000, 5)));
+  // Mini-jeu : proportionnel, objectif plafonné, meilleur de 2 essais
+  const mg = { points: 50, game: { kind: "secousse", target: 30 } };
+  assert.equal(gamePoints(mg, 15), 25);
+  assert.equal(gamePoints(mg, 45), 50, "au-delà de l'objectif : plafonné");
+  const pg = {};
+  let rt = registerTry(pg, mg, 12, 1000);
+  assert.deepEqual([rt.done, rt.points, rt.triesLeft], [false, 20, 1]);
+  assert.equal(pg.status, undefined, "pas encore terminé après un essai raté");
+  rt = registerTry(pg, mg, 9, 2000);
+  assert.deepEqual([rt.done, pg.status, pg.points, pg.best], [true, "done", 20, 12], "le meilleur essai compte");
+  const pg2 = {}; rt = registerTry(pg2, mg, 30, 1000);
+  assert.deepEqual([rt.done, pg2.points, pg2.tries], [true, 50, 1], "objectif atteint dès le 1er essai");
+  // Photos : classement du juge
+  assert.deepEqual([1, 2, 3, 4, 7].map(rankShare), [1, 0.8, 0.6, 0.5, 0.5]);
+  assert.equal(judgedPoints(50, { verdict: "done", rank: 2 }), 40);
+  assert.equal(judgedPoints(50, "done"), 50, "ancien format : tous les points");
+  assert.equal(judgedPoints(50, "refused"), 0);
+  const tm = { progress: { x: { status: "pending", points: 50 } }, judgments: { x: { verdict: "done", rank: 3 } } };
+  assert.deepEqual([mp(tm).x.status, mp(tm).x.points, mp(tm).x.rank], ["done", 30, 3]);
+  console.log("Tests points selon la performance OK");
+}

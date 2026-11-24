@@ -329,3 +329,12 @@ body.mp-open { overflow: hidden; }
 .mp-pin.other::before { background: var(--hero); opacity: .85; }
 .mp-pin span { position: absolute; left: 1px; top: 2px; width: 28px; text-align: center; font: 700 11px/20px system-ui, sans-serif; color: #fff; }
 .mp-zone { fill: var(--accent); fill-opacity: .15; stroke: var(--accent); stroke-width: 2; }
+
+/* ---------- Classement des photos et vidéos ---------- */
+.judge-group { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+.judge-group summary { display: block; cursor: pointer; padding: 4px 0; }
+.judge-group summary::before { content: "▸ "; color: var(--muted); }
+.judge-group[open] summary::before { content: "▾ "; }
+.judge-group summary::-webkit-details-marker { display: none; }
+.rank-seg button { min-width: 44px; }
+.rank-seg button:last-child { margin-left: auto; }
